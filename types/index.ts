@@ -10,6 +10,14 @@ export interface GroundingReport {
   timestamp: number;
 }
 
+export interface RagCitation {
+  title: string;
+  path?: string;
+  source: 'sandbox' | 'upload' | 'seed' | 'paste';
+  score: number;
+  snippet: string;
+}
+
 export interface Message {
   id: string;
   role: Role;
@@ -18,6 +26,7 @@ export interface Message {
   timestamp: number;
   groundingReport?: GroundingReport;
   swarmSession?: SwarmSession;
+  ragCitations?: RagCitation[];
 }
 
 export interface WorkspaceFile {

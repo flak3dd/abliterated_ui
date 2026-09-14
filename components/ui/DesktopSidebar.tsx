@@ -23,6 +23,8 @@ import {
   Terminal,
   ChevronRight,
   Laptop,
+  Zap,
+  Globe,
 } from 'lucide-react-native';
 import * as Haptics from 'expo-haptics';
 import Colors from '../../theme/colors';
@@ -49,7 +51,7 @@ export const DesktopSidebar: React.FC<DesktopSidebarProps> = ({ onOpenEnvModal }
     downloadActiveEnvironmentZip,
   } = useChatStore();
 
-  const { activeHost } = useMeshStore();
+  const { activeHost, meshMode, setMeshMode } = useMeshStore();
   const {
     status: sandboxStatus,
     target,
@@ -295,9 +297,31 @@ export const DesktopSidebar: React.FC<DesktopSidebarProps> = ({ onOpenEnvModal }
         </View>
 
         <View style={styles.clusterInfoRow}>
-          <Text style={styles.clusterHostText} numberOfLines={1}>
-            {activeHost || 'api.abliterated.ai'}
-          </Text>
+          <TouchableOpacity
+            style={styles.sidebarModePill}
+            onPress={() => {
+              try {
+                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+              } catch (e) {}
+              setMeshMode(meshMode === 'spark' ? 'cloud' : 'spark');
+            }}
+            activeOpacity={0.8}
+          >
+            {meshMode === 'spark' ? (
+              <Zap size={11} color={Colors.brand.emerald} />
+            ) : (
+              <Globe size={11} color={Colors.brand.sky} />
+            )}
+            <Text
+              style={[
+                styles.clusterHostText,
+                meshMode === 'spark' ? styles.clusterHostTextSpark : styles.clusterHostTextCloud,
+              ]}
+              numberOfLines={1}
+            >
+              {meshMode === 'spark' ? 'Spark (103)' : 'Cloud Mesh'}
+            </Text>
+          </TouchableOpacity>
           <PingIndicator />
         </View>
       </View>
@@ -584,10 +608,29 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     paddingHorizontal: 2,
   },
+  sidebarModePill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    backgroundColor: 'rgba(255, 255, 255, 0.04)',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.07)',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 6,
+  },
   clusterHostText: {
     fontSize: 10,
     fontFamily: 'Menlo',
     color: Colors.text.tertiary,
-    maxWidth: 170,
+    maxWidth: 140,
+  },
+  clusterHostTextSpark: {
+    color: Colors.brand.emerald,
+    fontWeight: '700',
+  },
+  clusterHostTextCloud: {
+    color: Colors.brand.sky,
+    fontWeight: '700',
   },
 });

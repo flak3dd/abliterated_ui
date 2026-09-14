@@ -8,11 +8,12 @@ import {
   Platform,
 } from 'react-native';
 import { useRouter } from 'expo-router';
-import { Mic, ArrowUp, Square, ShieldCheck, Zap } from 'lucide-react-native';
+import { Mic, ArrowUp, Square, ShieldCheck, Zap, BookOpen } from 'lucide-react-native';
 import * as Haptics from 'expo-haptics';
 import Colors from '../../theme/colors';
 import { useChatStore } from '../../stores/useChatStore';
 import { useSwarmStore } from '../../stores/useSwarmStore';
+import { useRagStore } from '../../stores/useRagStore';
 import Animated, {
   useSharedValue,
   useAnimatedStyle,
@@ -37,6 +38,7 @@ export const InputDock: React.FC<InputDockProps> = ({
   const [inputText, setInputText] = useState('');
   const { antiHallucination, toggleAntiHallucination } = useChatStore();
   const { isSwarmMode, toggleSwarmMode } = useSwarmStore();
+  const { enabled: ragEnabled, chunks, toggleEnabled: toggleRag } = useRagStore();
   
   // Animations
   const sendButtonScale = useSharedValue(0.8);
@@ -185,6 +187,27 @@ export const InputDock: React.FC<InputDockProps> = ({
                 ]}
               >
                 {isSwarmMode ? 'Swarm: AUTO' : 'Swarm: OFF'}
+              </Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[styles.antiHallucinationPill, ragEnabled && styles.antiHallucinationPillActive]}
+              onPress={() => {
+                try {
+                  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+                } catch (e) {}
+                toggleRag();
+              }}
+              activeOpacity={0.75}
+            >
+              <BookOpen size={11} color={ragEnabled ? Colors.brand.emerald : '#71717A'} />
+              <Text
+                style={[
+                  styles.antiHallucinationPillText,
+                  ragEnabled && styles.antiHallucinationPillTextActive,
+                ]}
+              >
+                {ragEnabled ? 'RAG: ' + chunks.length + ' chunks' : 'RAG: OFF'}
               </Text>
             </TouchableOpacity>
 

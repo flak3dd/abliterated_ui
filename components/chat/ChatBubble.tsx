@@ -5,7 +5,7 @@ import { Message } from '../../types';
 import { ReasoningAccordion } from './ReasoningAccordion';
 import { CodeBlock } from './CodeBlock';
 import { detectFilenameAndContent } from '../../services/zipService';
-import { Cpu, Copy, Check, FlaskConical, Hammer, Terminal, ShieldCheck, ShieldAlert, ChevronDown, ChevronUp } from 'lucide-react-native';
+import { Cpu, Copy, Check, FlaskConical, Hammer, Terminal, ShieldCheck, ShieldAlert, ChevronDown, ChevronUp, BookOpen } from 'lucide-react-native';
 import * as Haptics from 'expo-haptics';
 import Animated, { FadeInUp, FadeIn } from 'react-native-reanimated';
 import { TestResultCard } from './TestResultCard';
@@ -125,6 +125,7 @@ export const ChatBubbleBase: React.FC<ChatBubbleProps> = ({
   const [streamFrame, setStreamFrame] = useState<string | null>(null);
   const [showStream, setShowStream] = useState(false);
   const [showGroundingDetails, setShowGroundingDetails] = useState(false);
+  const [showRagDetails, setShowRagDetails] = useState(false);
   const [loadingSeconds, setLoadingSeconds] = useState<number>(0);
   const timerRef = useRef<NodeJS.Timeout | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
@@ -342,6 +343,25 @@ export const ChatBubbleBase: React.FC<ChatBubbleProps> = ({
             <Text style={styles.assistantHeaderText}>Spark AI • GB10</Text>
           </View>
 
+          <View style={styles.assistantHeaderLeft}>
+          {message.ragCitations && message.ragCitations.length > 0 && (
+            <TouchableOpacity
+              style={[styles.groundingBadge, styles.groundingBadgeGrounded]}
+              onPress={() => setShowRagDetails(!showRagDetails)}
+              activeOpacity={0.75}
+            >
+              <BookOpen size={11} color={Colors.brand.emerald} />
+              <Text style={[styles.groundingBadgeText, styles.groundingBadgeTextGrounded]}>
+                RAG {message.ragCitations.length}
+              </Text>
+              {showRagDetails ? (
+                <ChevronUp size={10} color={Colors.brand.emerald} />
+              ) : (
+                <ChevronDown size={10} color={Colors.brand.emerald} />
+              )}
+            </TouchableOpacity>
+          )}
+
           {message.groundingReport && (
             <TouchableOpacity
               style={[
@@ -394,7 +414,25 @@ export const ChatBubbleBase: React.FC<ChatBubbleProps> = ({
               )}
             </TouchableOpacity>
           )}
+          </View>
         </View>
+
+        {showRagDetails && message.ragCitations && message.ragCitations.length > 0 && (
+          <View style={styles.groundingDetailsBox}>
+            <View style={styles.groundingDetailsHeader}>
+              <BookOpen size={13} color={Colors.brand.emerald} />
+              <Text style={styles.groundingDetailsTitle}>LOCAL RAG SOURCES</Text>
+            </View>
+            {message.ragCitations.map((cite, idx) => (
+              <View key={idx} style={styles.warningItem}>
+                <Text style={styles.verifiedTagText}>
+                  [{idx + 1}] {cite.path || cite.title} ({cite.source}, {cite.score.toFixed(2)})
+                </Text>
+                <Text style={styles.warningText}>{cite.snippet}</Text>
+              </View>
+            ))}
+          </View>
+        )}
 
         {/* Detailed Anti-Hallucination Grounding Drawer */}
         {showGroundingDetails && message.groundingReport && (

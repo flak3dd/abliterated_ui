@@ -21,6 +21,8 @@ import {
   Flame,
   Key,
   Globe,
+  Zap,
+  Cpu,
 } from 'lucide-react-native';
 import * as Haptics from 'expo-haptics';
 import Colors from '../theme/colors';
@@ -36,11 +38,15 @@ export default function RadarModalScreen() {
     isProbing,
     simulationMode,
     featherlessApiKey,
+    meshMode,
     probeAll,
     setActiveHost,
+    setMeshMode,
     setApiKey,
     toggleSimulationMode,
   } = useMeshStore();
+
+  const isSpark = meshMode === 'spark';
 
   const [keyInput, setKeyInput] = useState(featherlessApiKey);
   const [savedSuccess, setSavedSuccess] = useState(false);
@@ -102,11 +108,88 @@ export default function RadarModalScreen() {
       </View>
 
       <ScrollView style={styles.scrollArea} contentContainerStyle={styles.scrollContent}>
+        {/* Simple & Effective Manual Mesh Mode Switcher */}
+        <View style={styles.modeCard}>
+          <View style={styles.modeCardHeader}>
+            <View style={styles.modeCardHeaderLeft}>
+              <Cpu size={15} color={isSpark ? Colors.brand.emerald : Colors.brand.sky} />
+              <Text style={styles.modeCardTitle}>MANUAL MESH PROFILE</Text>
+            </View>
+            <View
+              style={[
+                styles.modeIndicatorPill,
+                isSpark ? styles.modeIndicatorPillSpark : styles.modeIndicatorPillCloud,
+              ]}
+            >
+              <Text
+                style={[
+                  styles.modeIndicatorPillText,
+                  isSpark ? styles.modeIndicatorPillTextSpark : styles.modeIndicatorPillTextCloud,
+                ]}
+              >
+                {isSpark ? '⚡ SPARK CLUSTER' : '☁️ CLOUD MESH'}
+              </Text>
+            </View>
+          </View>
+
+          <View style={styles.modeToggleRow}>
+            <TouchableOpacity
+              style={[styles.modeOption, isSpark && styles.modeOptionActiveSpark]}
+              onPress={() => {
+                try {
+                  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+                } catch (e) {}
+                setMeshMode('spark');
+              }}
+              activeOpacity={0.8}
+            >
+              <View style={styles.modeOptionTop}>
+                <Zap size={15} color={isSpark ? '#10B981' : '#71717A'} />
+                <Text style={[styles.modeOptionTitle, isSpark && styles.modeOptionTitleActiveSpark]}>
+                  DGX Spark (LAN)
+                </Text>
+              </View>
+              <Text style={styles.modeOptionSubtitle}>
+                192.168.4.103:8000 • GB10 Blackwell
+              </Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[styles.modeOption, !isSpark && styles.modeOptionActiveCloud]}
+              onPress={() => {
+                try {
+                  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+                } catch (e) {}
+                setMeshMode('cloud');
+              }}
+              activeOpacity={0.8}
+            >
+              <View style={styles.modeOptionTop}>
+                <Globe size={15} color={!isSpark ? '#38BDF8' : '#71717A'} />
+                <Text style={[styles.modeOptionTitle, !isSpark && styles.modeOptionTitleActiveCloud]}>
+                  Cloud Mesh (Web)
+                </Text>
+              </View>
+              <Text style={styles.modeOptionSubtitle}>
+                api.featherless.ai • Public HTTPS
+              </Text>
+            </TouchableOpacity>
+          </View>
+
+          <Text style={styles.modeCardDescription}>
+            {isSpark
+              ? '⚡ Spark Local Profile: Direct streaming to physical DGX Spark GB10 cluster. FP8 LLM and Krea diffusion at sub-20ms latency.'
+              : '☁️ Cloud Mesh Profile: Universal public HTTPS routing (Featherless AI & Sovereign Cloud). Deployable on web.abliterated.app everywhere.'}
+          </Text>
+        </View>
+
         {/* Active Route Summary Card */}
         <View style={styles.activeRouteCard}>
           <View style={styles.activeRouteHeader}>
-            <ShieldCheck size={18} color={Colors.brand.emerald} />
-            <Text style={styles.activeRouteTitle}>ACTIVE DATA ROUTE</Text>
+            <ShieldCheck size={18} color={isSpark ? Colors.brand.emerald : Colors.brand.sky} />
+            <Text style={[styles.activeRouteTitle, !isSpark && { color: Colors.brand.sky }]}>
+              ACTIVE DATA ROUTE
+            </Text>
           </View>
           <Text style={styles.activeHostDisplay}>
             {resolveApiUrl(activeHost, activePort)}
@@ -206,7 +289,7 @@ export default function RadarModalScreen() {
             <Text style={styles.apiKeyTitle}>FEATHERLESS AI API KEY</Text>
           </View>
           <Text style={styles.apiKeyNote}>
-            Optional Bearer token for accessing uncensored open-weight models on the Featherless AI inference mesh (https://api.featherless.io).
+            Optional Bearer token for accessing uncensored open-weight models on the Featherless AI inference mesh (https://api.featherless.ai).
           </Text>
           <View style={styles.apiKeyInputRow}>
             <TextInput
@@ -290,6 +373,104 @@ const styles = StyleSheet.create({
   scrollContent: {
     padding: 16,
     paddingBottom: 40,
+  },
+  modeCard: {
+    backgroundColor: Colors.background.surface,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.08)',
+    borderRadius: 16,
+    padding: 14,
+    marginBottom: 16,
+  },
+  modeCardHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 12,
+  },
+  modeCardHeaderLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  modeCardTitle: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: Colors.text.secondary,
+    letterSpacing: 0.8,
+  },
+  modeIndicatorPill: {
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 9999,
+    borderWidth: 1,
+  },
+  modeIndicatorPillSpark: {
+    backgroundColor: 'rgba(16, 185, 129, 0.12)',
+    borderColor: 'rgba(16, 185, 129, 0.3)',
+  },
+  modeIndicatorPillCloud: {
+    backgroundColor: 'rgba(56, 189, 248, 0.12)',
+    borderColor: 'rgba(56, 189, 248, 0.3)',
+  },
+  modeIndicatorPillText: {
+    fontSize: 10,
+    fontFamily: 'Menlo',
+    fontWeight: '700',
+  },
+  modeIndicatorPillTextSpark: {
+    color: Colors.brand.emerald,
+  },
+  modeIndicatorPillTextCloud: {
+    color: Colors.brand.sky,
+  },
+  modeToggleRow: {
+    flexDirection: 'row',
+    gap: 10,
+    marginBottom: 10,
+  },
+  modeOption: {
+    flex: 1,
+    backgroundColor: 'rgba(255, 255, 255, 0.02)',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.06)',
+    borderRadius: 12,
+    padding: 12,
+  },
+  modeOptionActiveSpark: {
+    backgroundColor: 'rgba(16, 185, 129, 0.08)',
+    borderColor: 'rgba(16, 185, 129, 0.4)',
+  },
+  modeOptionActiveCloud: {
+    backgroundColor: 'rgba(56, 189, 248, 0.08)',
+    borderColor: 'rgba(56, 189, 248, 0.4)',
+  },
+  modeOptionTop: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginBottom: 4,
+  },
+  modeOptionTitle: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: Colors.text.secondary,
+  },
+  modeOptionTitleActiveSpark: {
+    color: Colors.brand.emerald,
+  },
+  modeOptionTitleActiveCloud: {
+    color: Colors.brand.sky,
+  },
+  modeOptionSubtitle: {
+    fontSize: 11,
+    fontFamily: 'Menlo',
+    color: Colors.text.tertiary,
+  },
+  modeCardDescription: {
+    fontSize: 11.5,
+    color: Colors.text.tertiary,
+    lineHeight: 16,
   },
   activeRouteCard: {
     backgroundColor: Colors.background.surface,

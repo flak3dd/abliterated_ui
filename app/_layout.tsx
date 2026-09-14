@@ -6,19 +6,27 @@ import { View, StyleSheet, Platform } from 'react-native';
 import Colors from '../theme/colors';
 import { useChatStore } from '../stores/useChatStore';
 import { useMeshStore } from '../stores/useMeshStore';
+import { useRagStore } from '../stores/useRagStore';
 
 export default function RootLayout() {
   const loadChat = useChatStore((s) => s.loadFromStorage);
   const probeAll = useMeshStore((s) => s.probeAll);
   const loadApiKeys = useMeshStore((s) => s.loadApiKeys);
+  const loadMeshMode = useMeshStore((s) => s.loadMeshMode);
+  const loadRag = useRagStore((s) => s.loadFromStorage);
 
   useEffect(() => {
     if (Platform.OS === 'web' && typeof document !== 'undefined') {
       document.title = 'Abliterated AI • Sovereign Neural Studio';
     }
-    loadApiKeys();
-    loadChat();
-    probeAll();
+    const initApp = async () => {
+      await loadMeshMode();
+      await loadApiKeys();
+      await loadChat();
+      await loadRag();
+      probeAll();
+    };
+    initApp();
 
     // Background latency probe interval (every 10s)
     const interval = setInterval(() => {

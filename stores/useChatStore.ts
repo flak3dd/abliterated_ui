@@ -11,6 +11,7 @@ import {
 } from '../services/zipService';
 import { telemetryBridge } from '../services/matrix/TelemetryStreamBridge';
 import { evaluateFactualGrounding } from '../services/hallucinationDetector';
+import { useRagStore } from './useRagStore';
 import {
   markFileDirty,
   markFileDeleted,
@@ -452,8 +453,24 @@ export const useChatStore = create<ChatState>((set, get) => ({
         ? existingFiles.map((f) => `  - ${f} (${activeEnv!.files[f].language || 'text'}, ${activeEnv!.files[f].sizeBytes || 0} bytes)`).join('\n')
         : '  (No files created yet in sandbox)';
 
-      // Inject actual file contents to prevent the model from hallucinating or guessing code
-      const activeFilesContext = existingFiles.length > 0
+      const ragState = useRagStore.getState();
+      let ragContext = '';
+      let ragCitations: ReturnType<typeof ragState.contextForQuery>['citations'] = [];
+      if (ragState.enabled) {
+        try {
+          ragState.ingestEnvironment(activeEnv);
+          const retrieved = ragState.contextForQuery(text.trim(), 6);
+          ragContext = retrieved.context;
+          ragCitations = retrieved.citations;
+        } catch (e) {
+          console.warn('[chat] RAG retrieve failed:', e);
+        }
+      }
+
+      // When RAG is off, inject truncated file dumps. When RAG is on, retrieved chunks replace the dump.
+      const activeFilesContext = ragState.enabled
+        ? ''
+        : existingFiles.length > 0
         ? existingFiles.map((f) => {
             const file = activeEnv!.files[f];
             if (!file?.content) return '';
@@ -462,6 +479,19 @@ export const useChatStore = create<ChatState>((set, get) => ({
               : file.content;
             return `========================================\nFILE: ${f} (${file.language || 'text'})\n========================================\n${snippet}\n========================================`;
           }).filter(Boolean).join('\n\n')
+        : '';
+
+      const ragSection = ragContext
+        ? `
+RETRIEVED LOCAL KNOWLEDGE (hybrid BM25 + dense; treat as source of truth):
+${ragContext}
+
+Citation rules: quote or paraphrase only from the numbered passages above. If they do not contain the answer, say you do not have that fact in the local index rather than inventing it.
+`
+        : ragState.enabled
+        ? `
+LOCAL RAG is enabled but retrieved no passages for this query. Do not invent cluster facts, APIs, or file contents. Say the local index does not contain the answer.
+`
         : '';
 
       const antiHallucinationSection = isAntiHallucination ? `
@@ -480,6 +510,7 @@ The following are the exact files currently existing in the active environment (
 ${activeFilesSummary}
 
 ${activeFilesContext ? `ACTUAL FILE CONTENTS IN WORKSPACE:\n${activeFilesContext}\n\nWhen modifying or referencing these files, base your answers strictly and verbatim on their actual contents shown above. Do NOT make up different code or pretend files contain things they do not.` : ''}
+${ragSection}
 
 3. CHAIN-OF-VERIFICATION (COV) IN INTERNAL REASONING:
    - In your internal <think> reasoning, execute an explicit verification pass:
@@ -602,6 +633,7 @@ The user can spin up a live temporary environment at any time to build, run, and
                   reasoning:
                     finalReasoning || accumulatedReasoning.trim() || undefined,
                   groundingReport,
+                  ragCitations: ragCitations.length ? ragCitations : undefined,
                 };
               }
 

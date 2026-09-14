@@ -1,0 +1,17 @@
+{
+  "name": "abliterated-spark-knowledge",
+  "version": "2026.09.14",
+  "refreshed": "2026-09-14",
+  "embedding": "hybrid-bm25-hash256",
+  "documents": [
+    "00-dataset-policy.md",
+    "01-network-routing.md",
+    "02-vllm-inference.md",
+    "03-image-studio.md",
+    "04-comfy-controller-gateway.md",
+    "05-app-screens-scripts.md",
+    "06-model-storage.md",
+    "07-rag-operations.md",
+    "08-cloud-mirrors.md"
+  ]
+}

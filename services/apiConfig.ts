@@ -49,9 +49,9 @@ export const CLOUD_PROVIDERS: Record<string, CloudProviderConfig> = {
   featherless: {
     id: 'featherless_cloud',
     name: 'Featherless AI',
-    host: 'api.featherless.io',
+    host: 'api.featherless.ai',
     port: 443,
-    baseUrl: 'https://api.featherless.io',
+    baseUrl: 'https://api.featherless.ai',
     provider: 'featherless',
     defaultModel: 'meta-llama/Meta-Llama-3.1-8B-Instruct',
     availableModels: [

@@ -9,7 +9,7 @@ import {
   SafeAreaView,
   Pressable,
 } from 'react-native';
-import { Plus, Trash2, MessageSquare, Shield, Server, X, Package } from 'lucide-react-native';
+import { Plus, Trash2, MessageSquare, Shield, Server, X, Package, Zap, Globe } from 'lucide-react-native';
 import * as Haptics from 'expo-haptics';
 import Colors from '../../theme/colors';
 import { useChatStore } from '../../stores/useChatStore';
@@ -29,7 +29,8 @@ export const DrawerMenu: React.FC<DrawerMenuProps> = ({ visible, onClose }) => {
     selectSession,
     deleteSession,
   } = useChatStore();
-  const { activeHost, activePort, candidates } = useMeshStore();
+  const { activeHost, activePort, candidates, meshMode, setMeshMode } = useMeshStore();
+  const isSpark = meshMode === 'spark';
 
   const handleCreateNew = () => {
     try {
@@ -163,12 +164,42 @@ export const DrawerMenu: React.FC<DrawerMenuProps> = ({ visible, onClose }) => {
             })}
           </ScrollView>
 
-          {/* Bottom Host Info */}
+          {/* Bottom Host Info & Manual Mode Switch */}
           <View style={styles.bottomInfo}>
+            <View style={styles.modeToggleRow}>
+              <TouchableOpacity
+                style={[styles.modeToggleBtn, isSpark && styles.modeToggleBtnSpark]}
+                onPress={() => {
+                  try { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium); } catch (e) {}
+                  setMeshMode('spark');
+                }}
+                activeOpacity={0.8}
+              >
+                <Zap size={11} color={isSpark ? '#10B981' : '#71717A'} />
+                <Text style={[styles.modeToggleText, isSpark && styles.modeToggleTextSpark]}>
+                  ⚡ Spark LAN
+                </Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[styles.modeToggleBtn, !isSpark && styles.modeToggleBtnCloud]}
+                onPress={() => {
+                  try { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium); } catch (e) {}
+                  setMeshMode('cloud');
+                }}
+                activeOpacity={0.8}
+              >
+                <Globe size={11} color={!isSpark ? '#38BDF8' : '#71717A'} />
+                <Text style={[styles.modeToggleText, !isSpark && styles.modeToggleTextCloud]}>
+                  ☁️ Cloud Mesh
+                </Text>
+              </TouchableOpacity>
+            </View>
+
             <View style={styles.hostRow}>
-              <Server size={14} color={Colors.brand.emerald} />
+              <Server size={13} color={isSpark ? Colors.brand.emerald : Colors.brand.sky} />
               <Text style={styles.hostLabel}>
-                {activeEndpoint?.name || 'DGX Spark'} ({activeHost}:{activePort})
+                {activeEndpoint?.name || (isSpark ? 'DGX Spark' : 'Featherless')} ({activeHost}:{activePort})
               </Text>
             </View>
             <Text style={styles.vaultSecurityNote}>
@@ -322,6 +353,45 @@ const styles = StyleSheet.create({
     paddingTop: 12,
     borderTopWidth: 1,
     borderTopColor: Colors.border.default,
+  },
+  modeToggleRow: {
+    flexDirection: 'row',
+    gap: 8,
+    marginBottom: 10,
+  },
+  modeToggleBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 5,
+    backgroundColor: 'rgba(255, 255, 255, 0.03)',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.06)',
+    paddingVertical: 6,
+    borderRadius: 8,
+  },
+  modeToggleBtnSpark: {
+    backgroundColor: 'rgba(16, 185, 129, 0.12)',
+    borderColor: 'rgba(16, 185, 129, 0.35)',
+  },
+  modeToggleBtnCloud: {
+    backgroundColor: 'rgba(56, 189, 248, 0.12)',
+    borderColor: 'rgba(56, 189, 248, 0.35)',
+  },
+  modeToggleText: {
+    fontSize: 11,
+    fontFamily: 'Menlo',
+    fontWeight: '600',
+    color: '#71717A',
+  },
+  modeToggleTextSpark: {
+    color: '#10B981',
+    fontWeight: '700',
+  },
+  modeToggleTextCloud: {
+    color: '#38BDF8',
+    fontWeight: '700',
   },
   hostRow: {
     flexDirection: 'row',

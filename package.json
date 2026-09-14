@@ -36,7 +36,7 @@
     "android": "expo start --android",
     "ios": "expo start --ios",
     "web": "expo start --web",
-    "build:web": "expo export -p web",
+    "build:web": "expo export -p web && cp -f vercel.json dist/vercel.json && echo '/* /index.html 200' > dist/_redirects",
     "preflight": "node ./scripts/preflight.mjs",
     "agent": "node ./scripts/spark-agent.mjs",
     "start-services": "node ./scripts/start-services.mjs",
@@ -47,6 +47,8 @@
     "tunnel": "node ./scripts/spark-tunnel.mjs",
     "test-stream": "node ./scripts/test-stream-chunks.mjs",
     "audit-image": "node ./scripts/audit-image.mjs",
+    "test-rag": "node ./scripts/test-rag.mjs",
+    "build-rag-dataset": "node ./scripts/build-rag-dataset.mjs",
     "check-qwen": "node ./scripts/check-qwen.mjs",
     "check-gpu": "node ./scripts/check-gpu.mjs"
   },

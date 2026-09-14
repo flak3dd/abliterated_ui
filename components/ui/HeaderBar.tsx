@@ -1,11 +1,12 @@
 import React from 'react';
 import { StyleSheet, Text, TouchableOpacity, View, Platform } from 'react-native';
-import { Menu, Zap, Terminal, PanelLeft, FlaskConical, Cpu, ShieldCheck } from 'lucide-react-native';
+import { Menu, Zap, Terminal, PanelLeft, FlaskConical, Cpu, ShieldCheck, BookOpen, Globe } from 'lucide-react-native';
 import * as Haptics from 'expo-haptics';
 import Colors from '../../theme/colors';
 import { PingIndicator } from '../telemetry/PingIndicator';
 import { useChatStore } from '../../stores/useChatStore';
 import { useMeshStore } from '../../stores/useMeshStore';
+import { useRagStore } from '../../stores/useRagStore';
 
 interface HeaderBarProps {
   onOpenDrawer?: () => void;
@@ -32,14 +33,18 @@ export const HeaderBar: React.FC<HeaderBarProps> = ({
   title = 'Abliterated AI',
   subtitle,
   modelTag,
-  modelSub = 'Sovereign Cloud',
+  modelSub,
 }) => {
   const { antiHallucination, toggleAntiHallucination } = useChatStore();
-  const { activeHost } = useMeshStore();
+  const { activeHost, meshMode, setMeshMode } = useMeshStore();
+  const { enabled: ragEnabled, chunks, toggleEnabled: toggleRag } = useRagStore();
 
+  const isSpark = meshMode === 'spark';
   const isFeatherless = activeHost.includes('featherless');
-  const effectiveSubtitle = subtitle || (isFeatherless ? 'Featherless' : 'Cloud');
-  const effectiveModelTag = modelTag || (isFeatherless ? 'Llama-3.1-8B (Mesh)' : 'qwen-abliterated (NVFP4)');
+
+  const effectiveSubtitle = subtitle || (isSpark ? 'DGX Spark' : isFeatherless ? 'Featherless' : 'Cloud');
+  const effectiveModelTag = modelTag || (isSpark ? 'qwen-abliterated (FP8)' : isFeatherless ? 'Llama-3.1-8B (Mesh)' : 'qwen-abliterated (Cloud)');
+  const effectiveModelSub = modelSub || (isSpark ? 'Spark 103' : 'Sovereign Cloud');
 
   const handleMenuPress = () => {
     try {
@@ -84,17 +89,50 @@ export const HeaderBar: React.FC<HeaderBarProps> = ({
           )}
         </TouchableOpacity>
 
-        {/* Center: Clean Title & Compact Badge */}
+        {/* Center: Clean Title & Manual Switch */}
         <View style={styles.centerContainer}>
           <Text style={styles.title}>{title}</Text>
-          <TouchableOpacity
-            style={styles.hardwareBadge}
-            onPress={handleMatrixPress}
-            activeOpacity={0.7}
-          >
-            <Zap size={9} color={Colors.brand.emerald} />
-            <Text style={styles.badgeText}>{effectiveSubtitle}</Text>
-          </TouchableOpacity>
+
+          {/* Simple & Effective Manual Mode Switch: Spark vs Cloud */}
+          <View style={styles.modeSwitchContainer}>
+            <TouchableOpacity
+              style={[
+                styles.modeSwitchBtn,
+                isSpark && styles.modeSwitchBtnSparkActive,
+              ]}
+              onPress={() => {
+                try {
+                  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+                } catch (e) {}
+                setMeshMode('spark');
+              }}
+              activeOpacity={0.8}
+            >
+              <Zap size={10} color={isSpark ? '#10B981' : '#71717A'} />
+              <Text style={[styles.modeSwitchText, isSpark && styles.modeSwitchTextSparkActive]}>
+                Spark
+              </Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[
+                styles.modeSwitchBtn,
+                !isSpark && styles.modeSwitchBtnCloudActive,
+              ]}
+              onPress={() => {
+                try {
+                  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+                } catch (e) {}
+                setMeshMode('cloud');
+              }}
+              activeOpacity={0.8}
+            >
+              <Globe size={10} color={!isSpark ? '#38BDF8' : '#71717A'} />
+              <Text style={[styles.modeSwitchText, !isSpark && styles.modeSwitchTextCloudActive]}>
+                Cloud
+              </Text>
+            </TouchableOpacity>
+          </View>
         </View>
       </View>
 
@@ -102,11 +140,35 @@ export const HeaderBar: React.FC<HeaderBarProps> = ({
       {isDesktop && (
         <View style={styles.centerPillGroup}>
           <View style={styles.modelPill}>
-            <Cpu size={11} color={Colors.brand.emerald} />
+            <Cpu size={11} color={isSpark ? Colors.brand.emerald : Colors.brand.sky} />
             <Text style={styles.modelPillText}>{effectiveModelTag}</Text>
             <Text style={styles.modelPillDivider}>•</Text>
-            <Text style={styles.modelPillSub}>{modelSub}</Text>
+            <Text style={styles.modelPillSub}>{effectiveModelSub}</Text>
           </View>
+
+          <TouchableOpacity
+            style={[
+              styles.antiHallucinationHeaderPill,
+              ragEnabled && styles.antiHallucinationHeaderPillActive,
+            ]}
+            onPress={() => {
+              try {
+                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+              } catch (e) {}
+              toggleRag();
+            }}
+            activeOpacity={0.75}
+          >
+            <BookOpen size={11} color={ragEnabled ? Colors.brand.emerald : '#71717A'} />
+            <Text
+              style={[
+                styles.antiHallucinationHeaderText,
+                ragEnabled && styles.antiHallucinationHeaderTextActive,
+              ]}
+            >
+              {ragEnabled ? 'RAG ' + chunks.length : 'RAG OFF'}
+            </Text>
+          </TouchableOpacity>
 
           <TouchableOpacity
             style={[
@@ -210,6 +272,48 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     letterSpacing: -0.3,
     color: Colors.text.primary,
+  },
+  modeSwitchContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(255, 255, 255, 0.04)',
+    borderRadius: 7,
+    padding: 2,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.08)',
+    marginLeft: 6,
+  },
+  modeSwitchBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3.5,
+    paddingHorizontal: 7,
+    paddingVertical: 2.5,
+    borderRadius: 5,
+  },
+  modeSwitchBtnSparkActive: {
+    backgroundColor: 'rgba(16, 185, 129, 0.18)',
+    borderWidth: 1,
+    borderColor: 'rgba(16, 185, 129, 0.4)',
+  },
+  modeSwitchBtnCloudActive: {
+    backgroundColor: 'rgba(56, 189, 248, 0.18)',
+    borderWidth: 1,
+    borderColor: 'rgba(56, 189, 248, 0.4)',
+  },
+  modeSwitchText: {
+    fontSize: 10.5,
+    fontFamily: 'Menlo',
+    fontWeight: '600',
+    color: '#71717A',
+  },
+  modeSwitchTextSparkActive: {
+    color: '#10B981',
+    fontWeight: '700',
+  },
+  modeSwitchTextCloudActive: {
+    color: '#38BDF8',
+    fontWeight: '700',
   },
   hardwareBadge: {
     flexDirection: 'row',

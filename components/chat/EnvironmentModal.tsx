@@ -28,6 +28,7 @@ import {
   Cpu,
   Laptop,
   CornerDownLeft,
+  BookOpen,
 } from 'lucide-react-native';
 import * as Haptics from 'expo-haptics';
 import Colors from '../../theme/colors';
@@ -36,6 +37,7 @@ import { useSandboxStore } from '../../stores/useSandboxStore';
 import { WorkspaceFile } from '../../types';
 import { downloadSingleFile, downloadEnvironmentAsZip } from '../../services/zipService';
 import { TestResultCard } from './TestResultCard';
+import { KnowledgePanel } from './KnowledgePanel';
 
 interface EnvironmentModalProps {
   visible: boolean;
@@ -62,7 +64,7 @@ export const EnvironmentModal: React.FC<EnvironmentModalProps> = ({
   } = useSandboxStore();
 
   const activeEnv = getActiveEnvironment();
-  const [activeTab, setActiveTab] = useState<'files' | 'tests' | 'terminal'>('files');
+  const [activeTab, setActiveTab] = useState<'files' | 'tests' | 'terminal' | 'knowledge'>('files');
   const [selectedFile, setSelectedFile] = useState<WorkspaceFile | null>(null);
   const [copied, setCopied] = useState(false);
   const [cmdInput, setCmdInput] = useState('');
@@ -185,6 +187,17 @@ export const EnvironmentModal: React.FC<EnvironmentModalProps> = ({
               <Terminal size={13} color={activeTab === 'terminal' ? Colors.brand.emerald : Colors.text.tertiary} />
               <Text style={[styles.tabBtnText, activeTab === 'terminal' && styles.tabBtnTextActive]}>
                 Terminal Logs
+              </Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[styles.tabBtn, activeTab === 'knowledge' && styles.tabBtnActive]}
+              onPress={() => setActiveTab('knowledge')}
+              activeOpacity={0.7}
+            >
+              <BookOpen size={13} color={activeTab === 'knowledge' ? Colors.brand.emerald : Colors.text.tertiary} />
+              <Text style={[styles.tabBtnText, activeTab === 'knowledge' && styles.tabBtnTextActive]}>
+                Knowledge
               </Text>
             </TouchableOpacity>
           </View>
@@ -434,6 +447,12 @@ export const EnvironmentModal: React.FC<EnvironmentModalProps> = ({
                 </View>
               )}
             </ScrollView>
+          )}
+
+          {activeTab === 'knowledge' && (
+            <View style={styles.tabContent}>
+              <KnowledgePanel />
+            </View>
           )}
 
           {/* TAB 3: TERMINAL LOGS */}
