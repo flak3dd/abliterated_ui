@@ -26,7 +26,7 @@ export const MatrixModal: React.FC<MatrixModalProps> = ({ visible, onClose }) =>
     >
       <View style={styles.container}>
         {/* Hardware-accelerated 60 FPS Canvas Rain & Skull */}
-        <MatrixCanvasView />
+        <MatrixCanvasView variant="director" />
 
         {/* Floating Cybernetic Director HUD */}
         <SafeAreaView style={styles.safeArea} pointerEvents="box-none">

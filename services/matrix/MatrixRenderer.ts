@@ -7,7 +7,7 @@ import {
   MatrixEngineConfig,
   RainColumn,
 } from './MatrixTypes';
-import { AsciiSkullEngine, SkullCell, ABLITERATED_LOGO_ASCII, ABLITERATED_SHAPE_MASK, MaskGrid } from './AsciiSkullEngine';
+import { AsciiSkullEngine, SkullCell, ABLITERATED_LOGO_ASCII, MaskGrid } from './AsciiSkullEngine';
 import { telemetryBridge } from './TelemetryStreamBridge';
 import { matrixAudio } from './MatrixAudioSynth';
 
@@ -46,6 +46,7 @@ export class MatrixRenderer {
   private didFreezeBeat = false;
   private freezeFlashUntil = 0;
   private variant: 'ambient' | 'director' = 'ambient';
+  private frameCache: ReturnType<MatrixRenderer['rainMetrics']> | null = null;
   private static readonly FORM_WORD = 'ABLITERATED';
   // Cyber letterforms that still read as ABLITERATED (Menlo / system unicode)
   private static readonly FORM_GLYPHS = ['Λ', 'ß', 'Ł', 'Ι', '┬', 'Ξ', 'Я', 'Λ', '┬', 'Ξ', 'Ð'];
@@ -101,12 +102,14 @@ export class MatrixRenderer {
     this.canvas.style.width = `${width}px`;
     this.canvas.style.height = `${height}px`;
     this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    this.frameCache = null;
     this.maskGrid = AsciiSkullEngine.getMaskGrid();
     this.initColumns();
     this.initSkull();
   }
 
   private rainMetrics() {
+    if (this.frameCache) return this.frameCache;
     const { rows: maskRows, cols: maskCols } = this.maskGrid;
     let charH = Math.round((this.height * 0.5) / Math.max(1, maskRows));
     charH = Math.max(7, Math.min(14, charH));
@@ -123,7 +126,8 @@ export class MatrixRenderer {
     const fs = charH;
     const offsetX = (this.width - maskCols * charW) / 2;
     const offsetY = (this.height - skullH) / 2 - this.height * 0.02;
-    return { fs, charW, charH, maskRows, maskCols, offsetX, offsetY };
+    this.frameCache = { fs, charW, charH, maskRows, maskCols, offsetX, offsetY };
+    return this.frameCache;
   }
 
   private rainPool(): string[] {

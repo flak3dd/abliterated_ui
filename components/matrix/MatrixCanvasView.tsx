@@ -5,9 +5,13 @@ import { useMatrixStore } from '../../stores/useMatrixStore';
 
 interface MatrixCanvasViewProps {
   style?: any;
+  variant?: 'ambient' | 'director';
 }
 
-export const MatrixCanvasView: React.FC<MatrixCanvasViewProps> = ({ style }) => {
+export const MatrixCanvasView: React.FC<MatrixCanvasViewProps> = ({
+  style,
+  variant = 'ambient',
+}) => {
   const containerRef = useRef<View>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const rendererRef = useRef<MatrixRenderer | null>(null);
@@ -21,6 +25,7 @@ export const MatrixCanvasView: React.FC<MatrixCanvasViewProps> = ({ style }) => 
     crtShader,
     bloomGlow,
     interactiveTouch,
+    isOpen,
   } = useMatrixStore();
 
   useEffect(() => {
@@ -38,7 +43,6 @@ export const MatrixCanvasView: React.FC<MatrixCanvasViewProps> = ({ style }) => 
     const container = containerRef.current as unknown as HTMLElement;
     if (!container) return;
 
-    // Create or locate HTML5 canvas
     let canvas = canvasRef.current;
     if (!canvas) {
       canvas = document.createElement('canvas');
@@ -48,27 +52,26 @@ export const MatrixCanvasView: React.FC<MatrixCanvasViewProps> = ({ style }) => 
       canvas.style.width = '100%';
       canvas.style.height = '100%';
       canvas.style.zIndex = '0';
-      canvas.style.pointerEvents = 'auto';
+      canvas.style.pointerEvents = variant === 'director' ? 'auto' : 'none';
       container.appendChild(canvas);
       canvasRef.current = canvas;
     }
 
     const width = container.clientWidth || window.innerWidth;
     const height = container.clientHeight || window.innerHeight;
-    canvas.width = width;
-    canvas.height = height;
 
     const renderer = new MatrixRenderer(canvas, {
       spectrum,
       speedMultiplier,
       glyphSet,
-      audioEnabled,
+      audioEnabled: variant === 'director' ? audioEnabled : false,
       crtShader,
       bloomGlow,
-      interactiveTouch,
+      interactiveTouch: variant === 'director' ? interactiveTouch : false,
     });
+    renderer.setVariant(variant);
     renderer.resize(width, height);
-    renderer.setPhase(phase);
+    renderer.setPhase(variant === 'ambient' ? 'PHASE_4_RAIN' : phase);
     renderer.start();
     rendererRef.current = renderer;
 
@@ -104,14 +107,23 @@ export const MatrixCanvasView: React.FC<MatrixCanvasViewProps> = ({ style }) => 
     };
 
     window.addEventListener('resize', handleResize);
-    canvas.addEventListener('mousemove', handleMouseMove);
-    canvas.addEventListener('mouseleave', handleMouseLeave);
-    canvas.addEventListener('touchmove', handleTouchMove, { passive: true });
-    canvas.addEventListener('touchend', handleTouchEnd);
+    const ro = new ResizeObserver(handleResize);
+    ro.observe(container);
+
+    if (variant === 'director') {
+      canvas.addEventListener('mousemove', handleMouseMove);
+      canvas.addEventListener('mouseleave', handleMouseLeave);
+      canvas.addEventListener('touchmove', handleTouchMove, { passive: true });
+      canvas.addEventListener('touchend', handleTouchEnd);
+    }
+
+    const fonts = (document as Document & { fonts?: FontFaceSet }).fonts;
+    fonts?.ready?.then(() => handleResize()).catch(() => {});
 
     return () => {
       renderer.stop();
       window.removeEventListener('resize', handleResize);
+      ro.disconnect();
       canvas?.removeEventListener('mousemove', handleMouseMove);
       canvas?.removeEventListener('mouseleave', handleMouseLeave);
       canvas?.removeEventListener('touchmove', handleTouchMove);
@@ -124,12 +136,11 @@ export const MatrixCanvasView: React.FC<MatrixCanvasViewProps> = ({ style }) => 
     };
   }, []);
 
-  // Update renderer when store state changes
   useEffect(() => {
-    if (rendererRef.current) {
-      rendererRef.current.setPhase(phase);
-    }
-  }, [phase]);
+    if (!rendererRef.current) return;
+    if (variant === 'ambient') return;
+    rendererRef.current.setPhase(phase);
+  }, [phase, variant]);
 
   useEffect(() => {
     if (rendererRef.current) {
@@ -142,15 +153,28 @@ export const MatrixCanvasView: React.FC<MatrixCanvasViewProps> = ({ style }) => 
       rendererRef.current.setConfig({
         speedMultiplier,
         glyphSet,
-        audioEnabled,
+        audioEnabled: variant === 'director' ? audioEnabled : false,
         crtShader,
         bloomGlow,
-        interactiveTouch,
+        interactiveTouch: variant === 'director' ? interactiveTouch : false,
       });
     }
-  }, [speedMultiplier, glyphSet, audioEnabled, crtShader, bloomGlow, interactiveTouch]);
+  }, [speedMultiplier, glyphSet, audioEnabled, crtShader, bloomGlow, interactiveTouch, variant]);
 
-  return <View ref={containerRef} style={[styles.container, style]} />;
+  useEffect(() => {
+    const renderer = rendererRef.current;
+    if (!renderer || variant !== 'ambient') return;
+    if (isOpen) renderer.stop();
+    else renderer.start();
+  }, [isOpen, variant]);
+
+  return (
+    <View
+      ref={containerRef}
+      style={[styles.container, style]}
+      pointerEvents={variant === 'director' ? 'auto' : 'none'}
+    />
+  );
 };
 
 const styles = StyleSheet.create({

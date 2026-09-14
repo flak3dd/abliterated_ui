@@ -88,16 +88,17 @@ export class AsciiSkullEngine {
   }
 
   /** Canonical occupancy grid copied from components/chat/matrix.sh */
-  public static getMaskGrid(lines: string[] = ABLITERATED_SHAPE_MASK): MaskGrid {
-    const rows = lines.length;
+  public static getMaskGrid(lines?: string[]): MaskGrid {
+    const src = lines ?? ABLITERATED_SHAPE_MASK;
+    const rows = src.length;
     let cols = 0;
-    for (const line of lines) {
+    for (const line of src) {
       if (line.length > cols) cols = line.length;
     }
     const occupied: boolean[][] = [];
     const occupiedCols = new Array(cols).fill(false);
     for (let r = 0; r < rows; r++) {
-      const line = lines[r] || '';
+      const line = src[r] || '';
       const row: boolean[] = new Array(cols);
       for (let c = 0; c < cols; c++) {
         const on = line[c] !== undefined && line[c] !== ' ';

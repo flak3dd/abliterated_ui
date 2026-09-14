@@ -86,7 +86,7 @@ export default function ChatScreen() {
           behavior={Platform.OS === 'ios' ? 'padding' : undefined}
         >
           {/* Matrix Rain Background Layer */}
-          <MatrixCanvasView />
+          <MatrixCanvasView variant="ambient" />
 
           {/* Desktop-Aware Header Bar */}
           <HeaderBar
