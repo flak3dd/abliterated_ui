@@ -64,8 +64,7 @@ export function restoreSandboxWork(
   work: { paths: string[]; deleted: string[]; replaceAll: boolean }
 ) {
   if (work.replaceAll) {
-    markEnvReplaceAll(envId);
-    return;
+    replaceAll.add(envId);
   }
   for (const p of work.paths) markFileDirty(envId, p);
   for (const p of work.deleted) markFileDeleted(envId, p);

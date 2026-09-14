@@ -202,11 +202,20 @@ function bm25Score(index: Bm25Index, chunkIdx: number, queryTokens: string[]): n
   return score;
 }
 
+let bm25Cache: { chunks: RagChunk[]; index: Bm25Index } | null = null;
+
+function getBm25(chunks: RagChunk[]): Bm25Index {
+  if (bm25Cache && bm25Cache.chunks === chunks) return bm25Cache.index;
+  const index = buildBm25(chunks);
+  bm25Cache = { chunks, index };
+  return index;
+}
+
 export function retrieveChunks(chunks: RagChunk[], query: string, k = 6): RagHit[] {
   if (!chunks.length || !query.trim()) return [];
   const qEmbed = embedText(query);
   const qTokens = tokenize(query);
-  const bm25 = buildBm25(chunks);
+  const bm25 = getBm25(chunks);
 
   let maxBm = 0;
   const raw = chunks.map((chunk, i) => {

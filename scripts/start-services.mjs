@@ -32,9 +32,23 @@ async function httpCheck(urlStr, timeoutMs = 3000) {
 }
 
 async function bootAllServices() {
+  const memProfile = (process.env.GPU_MEMORY_PROFILE || 'balanced').toLowerCase();
+  const imageMax = memProfile === 'image-max';
+  const chatMax = memProfile === 'chat-max';
+
   console.log(`\n${C.bold}======================================================================${C.reset}`);
   console.log(`   ${C.brightCyan}⚡ BOOTSTRAPPING ALL SERVICES: :7860, :8188, :17325 ⚡${C.reset}`);
+  console.log(`   GPU_MEMORY_PROFILE=${memProfile}  (chat-max | balanced | image-max)`);
   console.log(`${C.bold}======================================================================${C.reset}\n`);
+
+  if (chatMax) {
+    console.log(`${C.yellow}chat-max: skip ComfyUI so vLLM can use ~0.82 GPU util / 32k ctx.${C.reset}`);
+    console.log(`${C.dim}  vLLM flags: --gpu-memory-utilization 0.82 --max-model-len 32768 --enable-prefix-caching --enable-chunked-prefill --kv-cache-dtype fp8 --max-num-seqs 8${C.reset}\n`);
+  } else if (imageMax) {
+    console.log(`${C.yellow}image-max: keep Comfy + image bridge; leave vLLM at 0.48 / 16k.${C.reset}\n`);
+  } else {
+    console.log(`${C.dim}balanced: image bridge + Comfy up; vLLM stays at recipe 0.48 / 16384.${C.reset}\n`);
+  }
 
   // 1. Image Bridge & ComfyUI on DGX Spark (flak3dd)
   console.log(`${C.cyan}1. Launching Image Bridge (:7860) & ComfyUI (:8188) on DGX Spark...${C.reset}`);
@@ -61,7 +75,9 @@ async function bootAllServices() {
     # B. Launch ComfyUI Graph Engine (:8188) with 0.0.0.0 binding
     echo -n "  • Starting ComfyUI Graph Engine (:8188)... "
     COMFY_DIR="/home/flak3dd/ComfyUI"
-    if [ -d "$COMFY_DIR" ]; then
+    if [ "${chatMax ? '1' : '0'}" = "1" ]; then
+      echo "SKIPPED (GPU_MEMORY_PROFILE=chat-max)"
+    elif [ -d "$COMFY_DIR" ]; then
       cd "$COMFY_DIR"
       if ! ss -tlpn 2>/dev/null | grep -q ":8188"; then
         PY="$COMFY_DIR/.venv/bin/python"
@@ -113,7 +129,7 @@ async function bootAllServices() {
     if (!sandboxLive.ok) {
       const child = spawn('node', ['scripts/sandbox-runner.mjs'], {
         cwd: sandboxDir,
-        env: { ...process.env, SANDBOX_HOST: '0.0.0.0', SANDBOX_PORT: '17330' },
+        env: { ...process.env, SANDBOX_HOST: '127.0.0.1', SANDBOX_PORT: '17330' },
         detached: true,
         stdio: 'ignore',
       });

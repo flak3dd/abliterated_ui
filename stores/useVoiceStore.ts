@@ -42,6 +42,25 @@ export const useVoiceStore = create<VoiceStoreState>((set, get) => ({
       userTranscript: 'Listening...',
       isInterrupted: false,
     });
+    const ok = AudioService.startListening(
+      (transcript, isFinal) => {
+        set({ userTranscript: transcript || 'Listening...' });
+        if (isFinal && transcript.trim()) {
+          AudioService.stopListening();
+          void get().submitSpokenTurn(transcript.trim());
+        }
+      },
+      () => {
+        set({
+          userTranscript: 'Mic unavailable — tap a prompt chip or check browser permission.',
+        });
+      }
+    );
+    if (!ok) {
+      set({
+        userTranscript: 'Speech recognition unavailable. Use a prompt chip.',
+      });
+    }
   },
 
   interrupt: () => {
@@ -60,6 +79,7 @@ export const useVoiceStore = create<VoiceStoreState>((set, get) => ({
 
     // Halt any previous playback immediately
     AudioService.stopSpeaking();
+    AudioService.stopListening();
 
     set({
       userTranscript: speechText,

@@ -84,4 +84,52 @@ export class AudioService {
   static isSpeaking(): boolean {
     return this.isSpeakingNative;
   }
+
+  static startListening(
+    onResult: (transcript: string, isFinal: boolean) => void,
+    onError?: (err: unknown) => void
+  ): boolean {
+    this.stopListening();
+    if (Platform.OS !== 'web' || typeof window === 'undefined') {
+      onError?.(new Error('Speech recognition is only available in the browser'));
+      return false;
+    }
+    const SR =
+      (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (!SR) {
+      onError?.(new Error('Web Speech API not available'));
+      return false;
+    }
+    try {
+      const rec = new SR();
+      rec.continuous = true;
+      rec.interimResults = true;
+      rec.lang = 'en-US';
+      rec.onresult = (event: any) => {
+        let transcript = '';
+        let isFinal = false;
+        for (let i = event.resultIndex; i < event.results.length; i++) {
+          transcript += event.results[i][0]?.transcript || '';
+          if (event.results[i].isFinal) isFinal = true;
+        }
+        onResult(transcript.trim(), isFinal);
+      };
+      rec.onerror = (e: any) => onError?.(e);
+      rec.start();
+      this.recognitionInstance = rec;
+      return true;
+    } catch (e) {
+      onError?.(e);
+      return false;
+    }
+  }
+
+  static stopListening(): void {
+    try {
+      this.recognitionInstance?.stop?.();
+    } catch {
+      /* ignore */
+    }
+    this.recognitionInstance = null;
+  }
 }

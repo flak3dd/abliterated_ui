@@ -2,6 +2,7 @@ import { SwarmSession, SwarmSubtask, WorkspaceFile, AgentRole } from '../types';
 import { streamChatCompletion } from './vllmService';
 import { extractFilesFromMarkdown } from './zipService';
 import { evaluateFactualGrounding } from './hallucinationDetector';
+import { resolveApiUrl } from './apiConfig';
 
 /**
  * Intelligent task decomposition prompt
@@ -168,7 +169,7 @@ Output STRICT JSON ONLY:
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 2500);
 
-    const response = await fetch(`http://${host}:${port}/v1/chat/completions`, {
+    const response = await fetch(resolveApiUrl(host, port, '/v1/chat/completions'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({

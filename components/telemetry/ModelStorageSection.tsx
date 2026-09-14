@@ -47,7 +47,7 @@ const DEFAULT_SPARK_MODELS: SafetensorsModel[] = [
     shards: 1,
     status: 'LOADED_VRAM',
     path: 'spark/models/Qwen3.6-35B-A3B-abliterated-NVFP4-MTP',
-    description: 'Ultra-low latency 35B dense reasoning engine with MTP heads running in unified HBM.',
+    description: 'Ultra-low latency 35B dense reasoning engine with MTP heads in 128 GB unified LPDDR5x.',
     verifiedSha: 'sha256:e83f...c49a (Validated)',
   },
   {
@@ -163,7 +163,7 @@ export const ModelStorageSection: React.FC = () => {
           <View>
             <Text style={styles.headerTitle}>SOVEREIGN CLOUD MODEL STORAGE</Text>
             <Text style={styles.headerSubtitle}>
-              Safetensors weights deployed on NVLink inference cluster at api.abliterated.io
+              Weights on Spark NVMe · GB10 128 GB unified LPDDR5x
             </Text>
           </View>
         </View>
@@ -199,9 +199,13 @@ export const ModelStorageSection: React.FC = () => {
             <Text style={styles.statSub}>{DEFAULT_SPARK_MODELS.length} Models Cached</Text>
           </View>
           <View style={styles.statItem}>
-            <Text style={styles.statLabel}>ACTIVE VRAM</Text>
-            <Text style={[styles.statValue, { color: Colors.brand.emerald }]}>{vramActiveGb.toFixed(1)} GB</Text>
-            <Text style={styles.statSub}>Unified HBM</Text>
+            <Text style={styles.statLabel}>UNIFIED MEM</Text>
+            <Text style={[styles.statValue, { color: Colors.brand.emerald }]}>
+              {telemetry.vramUsedGb.toFixed(1)} GB
+            </Text>
+            <Text style={styles.statSub}>
+              {(telemetry.unifiedSpecGb || 128)} GB LPDDR5x
+            </Text>
           </View>
           <View style={styles.statItem}>
             <Text style={styles.statLabel}>AVAILABLE</Text>

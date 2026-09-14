@@ -58,7 +58,7 @@ export const useSwarmStore = create<SwarmState>((set, get) => ({
   activeSwarm: null,
   selectedTaskId: null,
   workerOutputs: {},
-  concurrencyLimit: 3,
+  concurrencyLimit: 2,
 
   toggleSwarmMode: () => {
     set((state) => ({ isSwarmMode: !state.isSwarmMode }));
@@ -268,9 +268,11 @@ export const useSwarmStore = create<SwarmState>((set, get) => ({
       // Step 3: Conclude Swarm and run automated tests
       set((state) => {
         if (!state.activeSwarm) return state;
+        const cancelled = !state.isOrchestrating;
+        const anyFailed = state.activeSwarm.tasks.some((t) => t.status === 'failed');
         const finalSwarm = {
           ...state.activeSwarm,
-          status: 'completed' as const,
+          status: (cancelled || anyFailed ? 'failed' : 'completed') as const,
           overallProgress: 100,
           activeWorkerCount: 0,
         };
@@ -356,6 +358,19 @@ export const useSwarmStore = create<SwarmState>((set, get) => ({
       });
     } catch (err: any) {
       console.warn(`[Swarm] Subtask retry failed for ${taskId}:`, err);
+      set((state) => {
+        if (!state.activeSwarm) return state;
+        const updatedSwarm = {
+          ...state.activeSwarm,
+          tasks: state.activeSwarm.tasks.map((t) =>
+            t.id === taskId
+              ? { ...t, status: 'failed' as const, error: err.message }
+              : t
+          ),
+        };
+        swarmUpdateListener?.(updatedSwarm);
+        return { activeSwarm: updatedSwarm };
+      });
     }
   },
 

@@ -8,7 +8,6 @@ import {
   TestFramework,
   WorkspaceFile,
 } from '../types';
-import { useMeshStore } from '../stores/useMeshStore';
 import {
   consumeSandboxWork,
   hasSandboxWork,
@@ -17,13 +16,19 @@ import {
 
 const PRIMARY_SANDBOX_PORT = 17330;
 
-function getControllerBaseUrl(target: ExecutionTarget): string {
-  if (target === 'dgx_spark') {
-    const meshHost = useMeshStore.getState().activeHost || '192.168.4.103';
-    return `http://${meshHost}:${PRIMARY_SANDBOX_PORT}`;
-  }
-  // Local host (Mac): connects directly to sandbox runner daemon (:17330)
+function getControllerBaseUrl(_target: ExecutionTarget): string {
   return `http://127.0.0.1:${PRIMARY_SANDBOX_PORT}`;
+}
+
+let materializeChain: Promise<void> = Promise.resolve();
+
+function enqueueMaterialize<T>(fn: () => Promise<T>): Promise<T> {
+  const run = materializeChain.then(fn, fn);
+  materializeChain = run.then(
+    () => undefined,
+    () => undefined
+  );
+  return run;
 }
 
 async function postSandbox(
@@ -265,48 +270,52 @@ export async function materializeSandbox(
   env: SessionEnvironment,
   target: ExecutionTarget = 'local_mac'
 ): Promise<SandboxInfo> {
-  const meta = detectRuntimeAndFramework(env.files);
-  const info = (filesCount: number, path?: string): SandboxInfo => ({
-    envId: env.id,
-    path: path || `/tmp/spark-sandboxes/${env.id}`,
-    runtime: meta.runtime,
-    target,
-    filesCount,
-  });
-
-  if (!hasSandboxWork(env.id)) {
-    return info(Object.keys(env.files).length);
-  }
-
-  const work = consumeSandboxWork(env.id);
-  const filesPayload: Record<string, { path: string; content: string }> = {};
-  const paths = work.replaceAll ? Object.keys(env.files) : work.paths;
-  for (const p of paths) {
-    const file = env.files[p];
-    if (!file) continue;
-    filesPayload[p] = { path: file.path, content: file.content };
-  }
-
-  const res = await postSandbox(
-    '/api/sandbox/materialize',
-    {
+  return enqueueMaterialize(async () => {
+    const meta = detectRuntimeAndFramework(env.files);
+    const info = (filesCount: number, path?: string): SandboxInfo => ({
       envId: env.id,
-      files: filesPayload,
-      deleted: work.replaceAll ? [] : work.deleted,
-      replaceAll: work.replaceAll,
-      target,
+      path: path || `/tmp/spark-sandboxes/${env.id}`,
       runtime: meta.runtime,
-    },
-    target
-  );
+      target,
+      filesCount,
+    });
 
-  if (res?.ok) {
-    const data = await res.json();
-    return info(Object.keys(env.files).length, data.path);
-  }
+    if (!hasSandboxWork(env.id)) {
+      return info(Object.keys(env.files).length);
+    }
 
-  restoreSandboxWork(env.id, work);
-  return info(Object.keys(env.files).length);
+    const work = consumeSandboxWork(env.id);
+    const filesPayload: Record<string, { path: string; content: string }> = {};
+    const paths = work.replaceAll ? Object.keys(env.files) : work.paths;
+    for (const p of paths) {
+      const file = env.files[p];
+      if (!file) continue;
+      filesPayload[p] = { path: file.path, content: file.content };
+    }
+
+    const res = await postSandbox(
+      '/api/sandbox/materialize',
+      {
+        envId: env.id,
+        files: filesPayload,
+        deleted: work.replaceAll ? [] : work.deleted,
+        replaceAll: work.replaceAll,
+        target,
+        runtime: meta.runtime,
+      },
+      target
+    );
+
+    if (res?.ok) {
+      const data = await res.json();
+      return info(Object.keys(env.files).length, data.path);
+    }
+
+    restoreSandboxWork(env.id, work);
+    throw new Error(
+      `Sandbox materialize failed (${res?.status ?? 'offline'}) at ${getControllerBaseUrl(target)}`
+    );
+  });
 }
 
 /**
@@ -366,9 +375,27 @@ export async function runSandboxTests(
       };
     }
 
-  // Fallback client simulation / analysis if daemon offline
   const durationMs = Date.now() - t0;
-  return simulateTestRun(env, meta.framework, durationMs);
+  return {
+    id: 'test_' + Date.now(),
+    envId: env.id,
+    timestamp: Date.now(),
+    framework: meta.framework,
+    total: 1,
+    passed: 0,
+    failed: 1,
+    skipped: 0,
+    durationMs,
+    tests: [
+      {
+        name: 'sandbox-daemon',
+        status: 'failed',
+        failureMessage: 'Sandbox runner offline or test request failed.',
+      },
+    ],
+    rawOutput: 'Sandbox runner unreachable — tests were not executed.',
+    exitCode: 1,
+  };
 }
 
 /**
@@ -412,10 +439,10 @@ export async function buildSandbox(
     envId: env.id,
     timestamp: Date.now(),
     runtime: meta.runtime,
-    success: true,
+    success: false,
     durationMs: Date.now() - t0,
-    output: `Verified syntax for ${Object.keys(env.files).length} files (${meta.runtime}). All checks passed.`,
-    exitCode: 0,
+    output: 'Sandbox runner unreachable — build was not executed.',
+    exitCode: 1,
   };
 }
 

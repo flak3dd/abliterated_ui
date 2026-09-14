@@ -2,7 +2,13 @@ import { create } from 'zustand';
 import { AspectRatioType, GeneratedImage } from '../types';
 import { useMeshStore } from './useMeshStore';
 import { useChatStore } from './useChatStore';
-import { generateKreaImage, MODEL_SAMPLER_DEFAULTS } from '../services/kreaService';
+import {
+  generateKreaImage,
+  listImageModels,
+  loadImageModel,
+  makeHistoryThumbnail,
+  MODEL_SAMPLER_DEFAULTS,
+} from '../services/kreaService';
 import { fetchJsonWithTimeout, resolveApiUrl } from '../services/apiConfig';
 
 export interface SparkGpuStats {
@@ -10,6 +16,74 @@ export interface SparkGpuStats {
   tempC: number;
   gpuUtilPct: number;
   powerDrawW: number;
+}
+
+function resolveStudioImageHost(): string {
+  const mesh = useMeshStore.getState();
+  const activeHost = mesh.activeHost;
+  const sparkEp =
+    mesh.candidates.find(
+      (c) =>
+        c.isOnline &&
+        (c.type === 'direct_lan' || c.type === 'tailscale' || c.type === 'secondary_lan')
+    ) ||
+    mesh.candidates.find(
+      (c) =>
+        c.type === 'direct_lan' || c.type === 'tailscale' || c.type === 'secondary_lan'
+    );
+  if (activeHost.includes('abliterated.') || activeHost.includes('featherless.')) {
+    return sparkEp?.host || '192.168.4.103';
+  }
+  return activeHost;
+}
+
+let warmGen = 0;
+let warmTimer: ReturnType<typeof setTimeout> | null = null;
+let warmAbort: AbortController | null = null;
+
+function warmSelectedModel(modelId: string) {
+  if (warmTimer) clearTimeout(warmTimer);
+  warmTimer = setTimeout(() => {
+    warmTimer = null;
+    void (async () => {
+      const gen = ++warmGen;
+      warmAbort?.abort();
+      const ac = new AbortController();
+      warmAbort = ac;
+      const host = resolveStudioImageHost();
+      useStudioStore.setState({
+        warmingModelId: modelId,
+        generationStatusText: 'Loading ' + modelId + ' weights…',
+      });
+      try {
+        const result = await loadImageModel(host, 7860, modelId, ac.signal);
+        if (gen !== warmGen) return;
+        const defaults = MODEL_SAMPLER_DEFAULTS[result.model];
+        const steps = result.params?.steps || defaults?.steps;
+        const guidance = result.params?.guidance ?? defaults?.guidanceScale;
+        useStudioStore.setState((s) => ({
+          warmingModelId: null,
+          loadedModelId: result.model,
+          modelSwitchError: null,
+          generationStatusText: 'Ready · ' + result.model,
+          ...(s.selectedModel === modelId && steps
+            ? { steps, guidanceScale: guidance ?? s.guidanceScale }
+            : {}),
+          modelAvailability: {
+            ...s.modelAvailability,
+            [result.model]: { available: true, loaded: true },
+          },
+        }));
+      } catch (err: any) {
+        if (ac.signal.aborted || gen !== warmGen) return;
+        useStudioStore.setState({
+          warmingModelId: null,
+          modelSwitchError: err?.message || 'Weight load failed',
+          generationStatusText: 'Weight load failed',
+        });
+      }
+    })();
+  }, 180);
 }
 
 interface StudioState {
@@ -36,11 +110,16 @@ interface StudioState {
   generationStepText: string;
   generationElapsedSec: number;
   sparkGpuStats: SparkGpuStats | null;
+  modelAvailability: Record<string, { available: boolean; loaded: boolean }>;
+  loadedModelId: string | null;
+  warmingModelId: string | null;
+  modelSwitchError: string | null;
 
   // Actions
   setPrompt: (prompt: string) => void;
   setNegativePrompt: (neg: string) => void;
   setSelectedModel: (model: string) => void;
+  refreshImageModels: () => Promise<void>;
   setAspectRatio: (ratio: AspectRatioType) => void;
   setBrushSize: (size: number) => void;
   setSteps: (steps: number) => void;
@@ -52,7 +131,15 @@ interface StudioState {
   setMaskPaths: (paths: string[]) => void;
   setCanvasSize: (size: { width: number; height: number }) => void;
   clearMask: () => void;
-  generateImage: () => Promise<GeneratedImage | null>;
+  generateImage: (opts?: {
+    prompt?: string;
+    model?: string;
+    imageUri?: string | null;
+    identityUri?: string | null;
+    intent?: string;
+    idType?: string;
+    aspectRatio?: AspectRatioType;
+  }) => Promise<GeneratedImage | null>;
   enhancePrompt: () => Promise<'llm' | 'local' | false>;
   exportToSandbox: (img?: GeneratedImage | null) => boolean;
   selectFromHistory: (image: GeneratedImage) => void;
@@ -83,6 +170,10 @@ export const useStudioStore = create<StudioState>((set, get) => ({
   generationStepText: '',
   generationElapsedSec: 0,
   sparkGpuStats: null,
+  modelAvailability: {},
+  loadedModelId: null,
+  warmingModelId: null,
+  modelSwitchError: null,
 
   setPrompt: (prompt) => set({ prompt }),
   setNegativePrompt: (negativePrompt) => set({ negativePrompt }),
@@ -90,8 +181,42 @@ export const useStudioStore = create<StudioState>((set, get) => ({
     const defaults = MODEL_SAMPLER_DEFAULTS[selectedModel];
     set({
       selectedModel,
+      modelSwitchError: null,
+      warmingModelId: selectedModel,
       ...(defaults ? { steps: defaults.steps, guidanceScale: defaults.guidanceScale } : {}),
     });
+    void warmSelectedModel(selectedModel);
+  },
+  refreshImageModels: async () => {
+    const host = resolveStudioImageHost();
+    try {
+      const { models, loaded } = await listImageModels(host, 7860);
+      const availability: Record<string, { available: boolean; loaded: boolean }> = {};
+      for (const m of models) {
+        availability[m.id] = { available: m.available, loaded: m.loaded };
+        if (m.steps && MODEL_SAMPLER_DEFAULTS[m.id] === undefined) {
+          MODEL_SAMPLER_DEFAULTS[m.id] = {
+            steps: m.steps,
+            guidanceScale: m.guidance ?? 3.5,
+          };
+        }
+      }
+      const current = get().selectedModel;
+      const currentAvail = availability[current];
+      set({
+        modelAvailability: availability,
+        loadedModelId: loaded[0] || get().loadedModelId,
+      });
+      if (currentAvail?.available === false) {
+        const fallback =
+          models.find((m) => m.available)?.id || 'krea2-raw-fp8';
+        if (fallback !== current) get().setSelectedModel(fallback);
+      } else if (currentAvail?.available && !currentAvail.loaded && !get().isGenerating) {
+        void warmSelectedModel(current);
+      }
+    } catch {
+      set({ modelSwitchError: 'Could not list models on :7860' });
+    }
   },
   setAspectRatio: (aspectRatio) => set({ aspectRatio }),
   setBrushSize: (brushSize) => set({ brushSize }),
@@ -127,7 +252,7 @@ export const useStudioStore = create<StudioState>((set, get) => ({
   },
   clearMask: () => set({ maskPaths: [] }),
 
-  generateImage: async () => {
+  generateImage: async (opts) => {
     const {
       prompt,
       negativePrompt,
@@ -142,10 +267,16 @@ export const useStudioStore = create<StudioState>((set, get) => ({
       guidanceScale,
       seed,
     } = get();
-    if (!prompt.trim() || isGenerating) return null;
+    const runPrompt = (opts?.prompt ?? prompt).trim();
+    const runModel = opts?.model || selectedModel;
+    const runImage = opts?.imageUri !== undefined ? opts.imageUri : sourceImageUri;
+    const runAspect = opts?.aspectRatio || aspectRatio;
+    if (!runPrompt && !opts?.intent) return null;
+    if (isGenerating) return null;
 
     const startTime = Date.now();
-    const activeHost = useMeshStore.getState().activeHost;
+    const imageHost = resolveStudioImageHost();
+    const activeHost = imageHost;
 
     set({
       isGenerating: true,
@@ -163,8 +294,8 @@ export const useStudioStore = create<StudioState>((set, get) => ({
 
       try {
         const progressUrls = [
-          resolveApiUrl(activeHost, 7860, '/v1/progress'),
-          resolveApiUrl(activeHost, 7860, '/progress'),
+          resolveApiUrl(imageHost, 7860, '/v1/progress'),
+          resolveApiUrl(imageHost, 7860, '/progress'),
         ];
         let pData: any = null;
         for (const progressUrl of progressUrls) {
@@ -190,7 +321,7 @@ export const useStudioStore = create<StudioState>((set, get) => ({
           let stepStr = '';
 
           if (status === 'loading') {
-            statusStr = 'Loading weights to GB10 Unified HBM';
+            statusStr = 'Loading weights into GB10 unified LPDDR5x';
             stepStr = 'Model Pipeline Init';
           } else if (status === 'encoding') {
             statusStr = 'Neural VAE Decoding & Base64 Encode';
@@ -248,20 +379,29 @@ export const useStudioStore = create<StudioState>((set, get) => ({
 
     try {
       const result = await generateKreaImage({
-        host: activeHost,
+        host: imageHost,
         port: 7860,
-        prompt: prompt.trim(),
+        prompt: runPrompt || 'keep original printed data',
         negativePrompt: negativePrompt.trim() || undefined,
-        aspectRatio,
-        imageUri: sourceImageUri,
-        maskData: maskPaths,
+        aspectRatio: runAspect,
+        imageUri: runImage,
+        maskData: opts?.intent ? undefined : maskPaths,
         canvasSize,
         brushSize,
-        model: selectedModel,
+        model: runModel,
         steps,
         guidanceScale,
         seed,
+        intent: opts?.intent,
+        idImageUri: opts?.identityUri,
+        idType: opts?.idType,
+        extra: opts?.intent
+          ? { mix_ratio: 0.5, timesteps: steps, cfg_scale: guidanceScale }
+          : undefined,
       });
+
+      const thumbUri = result.isFallback ? result.uri : await makeHistoryThumbnail(result.uri);
+      const historyItem = { ...result, uri: thumbUri || '' };
 
       if (result.isFallback) {
         set((state) => ({
@@ -272,7 +412,7 @@ export const useStudioStore = create<StudioState>((set, get) => ({
           currentGeneratedImage: result,
           maskPaths: [],
           isMaskEnabled: false,
-          history: [result, ...state.history.slice(0, 29)],
+          history: [historyItem, ...state.history.slice(0, 29)],
         }));
       } else {
         set((state) => ({
@@ -284,7 +424,7 @@ export const useStudioStore = create<StudioState>((set, get) => ({
           sourceImageUri: result.uri,
           maskPaths: [],
           isMaskEnabled: false,
-          history: [result, ...state.history.slice(0, 29)],
+          history: [historyItem, ...state.history.slice(0, 29)],
         }));
       }
       return result;
@@ -388,8 +528,22 @@ export const useStudioStore = create<StudioState>((set, get) => ({
 
       if (envId) {
         const cleanTimestamp = Date.now();
-        const filename = `assets/studio_render_${cleanTimestamp}.png`;
-        chatState.addOrUpdateFile(envId, filename, targetImage.uri, 'image/png');
+        const filename = `assets/studio_render_${cleanTimestamp}.md`;
+        const note =
+          '# Studio render\n\n' +
+          '- id: `' +
+          targetImage.id +
+          '`\n' +
+          '- model: `' +
+          targetImage.model +
+          '`\n' +
+          '- aspect: `' +
+          targetImage.aspectRatio +
+          '`\n' +
+          '- prompt: ' +
+          targetImage.prompt.slice(0, 400) +
+          '\n\nBinary PNG is not stored in the chat vault. Open Neural Studio to view the current canvas.\n';
+        chatState.addOrUpdateFile(envId, filename, note, 'markdown');
         return true;
       }
     } catch (e) {

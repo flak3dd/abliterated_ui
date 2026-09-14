@@ -18,6 +18,7 @@ export default function SessionDetailScreen() {
     messages,
     activeSessionId,
     isStreaming,
+    streamingSessionId,
     selectSession,
     sendMessage,
     stopStreaming,
@@ -31,6 +32,7 @@ export default function SessionDetailScreen() {
 
   const currentSession = sessions.find((s) => s.id === id);
   const currentMessages = id ? messages[id] || [] : [];
+  const sessionStreaming = isStreaming && streamingSessionId === id;
 
   const handleBack = () => {
     try {
@@ -70,7 +72,7 @@ export default function SessionDetailScreen() {
         renderItem={({ item, index }) => (
           <ChatBubble
             message={item}
-            isStreaming={isStreaming && index === currentMessages.length - 1}
+            isStreaming={sessionStreaming && index === currentMessages.length - 1}
           />
         )}
         contentContainerStyle={styles.listContent}
@@ -81,7 +83,7 @@ export default function SessionDetailScreen() {
       <InputDock
         onSendMessage={(text) => sendMessage(text)}
         onStopStreaming={stopStreaming}
-        isStreaming={isStreaming}
+        isStreaming={sessionStreaming}
       />
     </SafeAreaView>
   );

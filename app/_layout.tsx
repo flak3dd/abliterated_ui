@@ -28,12 +28,42 @@ export default function RootLayout() {
     };
     initApp();
 
-    // Background latency probe interval (every 10s)
-    const interval = setInterval(() => {
-      probeAll();
-    }, 10000);
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const probeDelayMs = () => {
+      if (Platform.OS === 'web' && typeof document !== 'undefined' && document.hidden) {
+        return 0;
+      }
+      if (Platform.OS === 'web' && typeof window !== 'undefined') {
+        const path = window.location?.pathname || '';
+        if (path.includes('telemetry')) return 10000;
+      }
+      return 30000;
+    };
+    const scheduleProbe = () => {
+      if (timer) clearTimeout(timer);
+      const delay = probeDelayMs();
+      timer = setTimeout(() => {
+        if (probeDelayMs() !== 0) probeAll();
+        scheduleProbe();
+      }, delay || 30000);
+    };
+    scheduleProbe();
+    const onVis = () => {
+      if (Platform.OS === 'web' && typeof document !== 'undefined' && !document.hidden) {
+        probeAll();
+      }
+      scheduleProbe();
+    };
+    if (Platform.OS === 'web' && typeof document !== 'undefined') {
+      document.addEventListener('visibilitychange', onVis);
+    }
 
-    return () => clearInterval(interval);
+    return () => {
+      if (timer) clearTimeout(timer);
+      if (Platform.OS === 'web' && typeof document !== 'undefined') {
+        document.removeEventListener('visibilitychange', onVis);
+      }
+    };
   }, []);
 
   return (

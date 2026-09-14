@@ -85,6 +85,8 @@ export interface HardwareTelemetry {
   gpuTempMax: number;
   vramUsedGb: number;
   vramTotalGb: number;
+  unifiedSpecGb?: number;
+  memoryKind?: 'unified-lpddr5x' | 'discrete-vram';
   powerDrawWatts: number;
   powerLimitWatts: number;
   gpuClockMhz: number;

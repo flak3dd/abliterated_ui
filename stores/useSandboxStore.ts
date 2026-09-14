@@ -153,9 +153,10 @@ export const useSandboxStore = create<SandboxState>((set, get) => ({
     const isNode = targetFile.endsWith('.ts') || targetFile.endsWith('.js');
     const isSh = targetFile.endsWith('.sh') || targetFile.endsWith('.bash');
 
-    let execCmd = `python3 ${targetFile}`;
-    if (isNode) execCmd = `node ${targetFile}`;
-    if (isSh) execCmd = `bash ${targetFile}`;
+    const quoted = `'${String(targetFile).replace(/'/g, `'\\''`)}'`;
+    let execCmd = `python3 ${quoted}`;
+    if (isNode) execCmd = `node ${quoted}`;
+    if (isSh) execCmd = `bash ${quoted}`;
 
     try {
       get().appendLog(`$ ${execCmd}`);
@@ -214,6 +215,7 @@ export const useSandboxStore = create<SandboxState>((set, get) => ({
     get().appendLog(`\n$ ${cmd}`);
 
     try {
+      await get().materializeActiveEnv();
       const res = await executeSandboxCommand(activeEnv.id, cmd, get().target);
       if (res.stdout) get().appendLog(res.stdout);
       if (res.stderr) get().appendLog(res.stderr);

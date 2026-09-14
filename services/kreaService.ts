@@ -1,6 +1,36 @@
 import { AspectRatioType, GeneratedImage } from '../types';
 import { resolveApiUrl } from './apiConfig';
 
+const HISTORY_THUMB_EDGE = 128;
+
+export async function makeHistoryThumbnail(uri: string, maxEdge = HISTORY_THUMB_EDGE): Promise<string> {
+  if (!uri || uri.length < 32) return uri;
+  if (typeof document === 'undefined') {
+    return uri.startsWith('data:') && uri.length > 12000 ? '' : uri;
+  }
+  try {
+    const img = new Image();
+    const loaded = await new Promise<boolean>((resolve) => {
+      img.onload = () => resolve(true);
+      img.onerror = () => resolve(false);
+      img.src = uri;
+    });
+    if (!loaded || !img.width || !img.height) return '';
+    const scale = maxEdge / Math.max(img.width, img.height);
+    const w = Math.max(1, Math.round(img.width * scale));
+    const h = Math.max(1, Math.round(img.height * scale));
+    const canvas = document.createElement('canvas');
+    canvas.width = w;
+    canvas.height = h;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return '';
+    ctx.drawImage(img, 0, 0, w, h);
+    return canvas.toDataURL('image/jpeg', 0.72);
+  } catch {
+    return '';
+  }
+}
+
 export const IMAGE_SIZE_MAP: Record<AspectRatioType, { width: number; height: number }> = {
   '1:1': { width: 1024, height: 1024 },
   '9:16': { width: 720, height: 1280 },
@@ -10,15 +40,81 @@ export const IMAGE_SIZE_MAP: Record<AspectRatioType, { width: number; height: nu
 };
 
 export const MODEL_SAMPLER_DEFAULTS: Record<string, { steps: number; guidanceScale: number }> = {
-  'krea2-raw-fp8': { steps: 24, guidanceScale: 7.5 },
-  'flux2-klein-9b': { steps: 28, guidanceScale: 3.5 },
-  'z-image-turbo-nsfw-nvfp4': { steps: 4, guidanceScale: 1.0 },
+  'krea2-raw-fp8': { steps: 24, guidanceScale: 3.5 },
+  'krea2-turbo': { steps: 8, guidanceScale: 0.0 },
+  'flux2-klein-9b': { steps: 4, guidanceScale: 1.0 },
+  'flux2-klein-9b-base': { steps: 28, guidanceScale: 1.0 },
+  'z-image-turbo-nsfw-nvfp4': { steps: 8, guidanceScale: 1.0 },
   'qwen-image-2512-fp8': { steps: 30, guidanceScale: 4.0 },
-  'qwen-edit-2511-fp8': { steps: 24, guidanceScale: 4.0 },
-  'comfy-dolphin': { steps: 24, guidanceScale: 7.5 },
-  'ddb-edit': { steps: 24, guidanceScale: 7.5 },
+  'qwen-edit-2511-fp8': { steps: 28, guidanceScale: 3.5 },
+  'comfy-dolphin': { steps: 24, guidanceScale: 3.5 },
+  'dolphin-mistral-24b': { steps: 24, guidanceScale: 3.5 },
+  'ddb-edit': { steps: 64, guidanceScale: 5.5 },
+  'xing0916/DDB_Edit': { steps: 64, guidanceScale: 5.5 },
   'seedvr2-7b': { steps: 20, guidanceScale: 5.0 },
+  'seedvr2-7b-fp8': { steps: 20, guidanceScale: 5.0 },
 };
+
+export interface BridgeImageModel {
+  id: string;
+  available: boolean;
+  loaded: boolean;
+  steps?: number;
+  guidance?: number;
+  pipelineClass?: string;
+}
+
+export async function listImageModels(
+  host: string,
+  port = 7860
+): Promise<{ models: BridgeImageModel[]; loaded: string[] }> {
+  const url = resolveApiUrl(host, port, '/v1/models');
+  const res = await fetch(url, { signal: AbortSignal.timeout(4000) });
+  if (!res.ok) throw new Error(`models ${res.status}`);
+  const data = await res.json();
+  const rows = Array.isArray(data?.data) ? data.data : [];
+  const models: BridgeImageModel[] = rows.map((row: any) => ({
+    id: String(row.id || ''),
+    available: row.available !== false,
+    loaded: Boolean(row.loaded),
+    steps: typeof row.steps === 'number' ? row.steps : undefined,
+    guidance: typeof row.guidance === 'number' ? row.guidance : undefined,
+    pipelineClass: row.pipelineClass,
+  })).filter((m: BridgeImageModel) => m.id);
+  return {
+    models,
+    loaded: Array.isArray(data?.loaded) ? data.loaded.map(String) : models.filter((m) => m.loaded).map((m) => m.id),
+  };
+}
+
+export async function loadImageModel(
+  host: string,
+  port = 7860,
+  model: string,
+  signal?: AbortSignal
+): Promise<{ model: string; params?: { steps?: number; guidance?: number } }> {
+  const url = resolveApiUrl(host, port, '/v1/models/load');
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ model }),
+    signal,
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => '');
+    throw new Error(text || `load ${res.status}`);
+  }
+  const data = await res.json();
+  return {
+    model: String(data.model || model),
+    params: data.params
+      ? {
+          steps: Number(data.params.steps),
+          guidance: Number(data.params.guidance),
+        }
+      : undefined,
+  };
+}
 
 export interface GenerateImageParams {
   host: string;
@@ -34,6 +130,10 @@ export interface GenerateImageParams {
   steps?: number;
   guidanceScale?: number;
   seed?: number | null;
+  intent?: string;
+  idImageUri?: string | null;
+  idType?: string;
+  extra?: Record<string, unknown>;
 }
 
 function bytesToBase64(bytes: Uint8Array): string {
@@ -207,6 +307,10 @@ export async function generateKreaImage({
   steps = 24,
   guidanceScale = 7.5,
   seed = null,
+  intent,
+  idImageUri,
+  idType,
+  extra,
 }: GenerateImageParams): Promise<GeneratedImage> {
   const url = resolveApiUrl(host, port, '/v1/images/generations');
   const size = IMAGE_SIZE_MAP[aspectRatio] || IMAGE_SIZE_MAP['1:1'];
@@ -249,6 +353,17 @@ export async function generateKreaImage({
     }
   }
 
+  let encodedIdImage: string | undefined;
+  if (idImageUri) {
+    try {
+      encodedIdImage = await uriToDataUrl(idImageUri);
+    } catch {
+      if (idImageUri.startsWith('http') || idImageUri.startsWith('data:')) {
+        encodedIdImage = idImageUri;
+      }
+    }
+  }
+
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 180000);
   let errorMsg: string | undefined;
@@ -282,6 +397,12 @@ export async function generateKreaImage({
         response_format: 'b64_json',
         image: encodedImage || undefined,
         mask: encodedMask || undefined,
+        intent: intent || undefined,
+        id_image: encodedIdImage || undefined,
+        extra: {
+          ...(extra || {}),
+          ...(idType ? { id_type: idType } : {}),
+        },
       }),
       signal: controller.signal,
     });

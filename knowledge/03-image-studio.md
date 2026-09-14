@@ -9,10 +9,12 @@ Latent preview WS: ws://{activeHost}:7860/v1/images/stream
 ## Studio picker model IDs
 - krea2-raw-fp8 — Krea 2 RAW, default, 24 steps, CFG 7.5
 - flux2-klein-9b — 28 steps, CFG 3.5
-- seedvr2-7b — 20 steps, CFG 5.0
+- seedvr2-7b-fp8 — 20 steps, CFG 5.0 (alias seedvr2-7b)
+
+Picker loads GET :7860/v1/models (available/loaded). Selecting a pill POSTs /v1/models/load to evict the previous pipe and warm weights before Generate. Missing weights are disabled. Sampler defaults match spark_models.sampler_params.
 - z-image-turbo-nsfw-nvfp4 — Turbo NVFP4, 4 steps, CFG 1.0
 - qwen-image-2512-fp8 — 30 steps, CFG 4.0
-- qwen-edit-2511-fp8 — inpaint edit, 24 steps, CFG 4.0
+ID Studio (`/id-studio`) defaults to **ddb-edit** (`xing0916/DDB_Edit` + `Alpha-VLLM/Lumina-DiMOO` VQ-VAE). Official DDB defaults: timesteps 64, cfg 5.5, mix_ratio 0.5 (hybrid absorption). ID intents are routed to DDB unless the user explicitly picks Qwen-Edit. Qwen-Edit is fallback only.
 - comfy-dolphin — same OpenAI images path, 24 steps, CFG 7.5
 - ddb-edit — inpaint, 24 steps, CFG 7.5
 

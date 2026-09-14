@@ -26,8 +26,8 @@ class TelemetryBridge {
     const telemetry = useMeshStore.getState().telemetry;
 
     return {
-      vramUsedGb: telemetry?.vramUsedGb || 24.8,
-      vramTotalGb: telemetry?.vramTotalGb || 128.0,
+      vramUsedGb: telemetry?.vramUsedGb || 0,
+      vramTotalGb: telemetry?.vramTotalGb || 121.7,
       gpuTemp: telemetry?.gpuTemp || 41,
       tensorActive: telemetry?.tensorCoresActive || 94,
       nvlinkGbps: 1200, // 1.2 TB/s NVLink 5

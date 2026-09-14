@@ -27,6 +27,7 @@ interface ChatState {
   messages: Record<string, Message[]>;
   environments: Record<string, SessionEnvironment>;
   isStreaming: boolean;
+  streamingSessionId: string | null;
   activeAbortController: AbortController | null;
   antiHallucination: boolean;
 
@@ -63,6 +64,49 @@ interface ChatState {
 
 let saveTimer: ReturnType<typeof setTimeout> | null = null;
 let persistDirty = false;
+let saveQueue: Promise<void> = Promise.resolve();
+
+const VAULT_MAX_SESSIONS = 12;
+const VAULT_KEEP_REASONING = 4;
+
+function pruneVaultForStorage(
+  sessions: ChatSession[],
+  messages: Record<string, Message[]>,
+  environments: Record<string, SessionEnvironment>
+): {
+  sessions: ChatSession[];
+  messages: Record<string, Message[]>;
+  environments: Record<string, SessionEnvironment>;
+} {
+  const keptSessions = [...sessions]
+    .sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0))
+    .slice(0, VAULT_MAX_SESSIONS);
+  const nextMessages: Record<string, Message[]> = {};
+  const nextEnvs: Record<string, SessionEnvironment> = {};
+
+  for (const session of keptSessions) {
+    const msgs = messages[session.id] || [];
+    nextMessages[session.id] = msgs.map((m, i) => {
+      if (i >= msgs.length - VAULT_KEEP_REASONING || !m.reasoning) return m;
+      const { reasoning: _drop, ...rest } = m;
+      return rest;
+    });
+    if (session.envId && environments[session.envId]) {
+      const env = environments[session.envId];
+      const files: SessionEnvironment['files'] = {};
+      for (const [path, file] of Object.entries(env.files || {})) {
+        if (!file?.content) continue;
+        if (file.content.startsWith('data:')) continue;
+        if (/^image\//i.test(file.language || '')) continue;
+        if (/\.(png|jpe?g|gif|webp|svg|ico|woff2?|ttf|bin)$/i.test(path)) continue;
+        files[path] = file;
+      }
+      nextEnvs[session.envId] = { ...env, files };
+    }
+  }
+
+  return { sessions: keptSessions, messages: nextMessages, environments: nextEnvs };
+}
 
 function scheduleSave() {
   persistDirty = true;
@@ -100,21 +144,25 @@ export const useChatStore = create<ChatState>((set, get) => ({
   messages: {},
   environments: {},
   isStreaming: false,
+  streamingSessionId: null,
   activeAbortController: null,
   antiHallucination: true,
 
   toggleAntiHallucination: () => {
     set((state) => ({ antiHallucination: !state.antiHallucination }));
+    scheduleSave();
   },
 
   setAntiHallucination: (enabled: boolean) => {
     set({ antiHallucination: enabled });
+    scheduleSave();
   },
 
   updateLastAssistantMessageSwarm: (swarm: SwarmSession) => {
-    const { activeSessionId, messages } = get();
-    if (!activeSessionId) return;
-    const sessionMsgs = [...(messages[activeSessionId] || [])];
+    const sessionId = swarm.sessionId || get().activeSessionId;
+    if (!sessionId) return;
+    const messages = get().messages;
+    const sessionMsgs = [...(messages[sessionId] || [])];
     const lastIdx = sessionMsgs.length - 1;
     if (lastIdx >= 0 && sessionMsgs[lastIdx].role === 'assistant') {
       sessionMsgs[lastIdx] = {
@@ -124,7 +172,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       set({
         messages: {
           ...messages,
-          [activeSessionId]: sessionMsgs,
+          [sessionId]: sessionMsgs,
         },
       });
     }
@@ -139,6 +187,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   },
 
   createNewSession: (initialTitle = 'New Conversation') => {
+    if (get().isStreaming) get().stopStreaming();
     const newId = 'session_' + Date.now();
     const newEnv = createInitialEnvironment(newId);
 
@@ -168,6 +217,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   },
 
   deleteSession: (id: string) => {
+    if (get().streamingSessionId === id) get().stopStreaming();
     set((state) => {
       const targetSession = state.sessions.find((s) => s.id === id);
       const remainingSessions = state.sessions.filter((s) => s.id !== id);
@@ -305,7 +355,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
   },
 
   sendMessage: async (text: string) => {
-    if (!text.trim() || get().isStreaming) return;
+    if (!text.trim()) return;
+    if (get().isStreaming) {
+      if (get().streamingSessionId === get().activeSessionId) return;
+      get().stopStreaming();
+    }
 
     let currentSessionId = get().activeSessionId;
     if (!currentSessionId) {
@@ -357,6 +411,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
     set((state) => ({
       isStreaming: true,
+      streamingSessionId: currentSessionId,
       activeAbortController: controller,
       messages: {
         ...state.messages,
@@ -423,13 +478,19 @@ export const useChatStore = create<ChatState>((set, get) => ({
                 swarmSession: swarm,
               };
             }
+            const stillMine = state.activeAbortController === controller;
             return {
               messages: {
                 ...state.messages,
                 [currentSessionId!]: sessionMsgs,
               },
-              isStreaming: false,
-              activeAbortController: null,
+              ...(stillMine
+                ? {
+                    isStreaming: false,
+                    streamingSessionId: null,
+                    activeAbortController: null,
+                  }
+                : {}),
             };
           });
           void get().flushSave();
@@ -437,9 +498,18 @@ export const useChatStore = create<ChatState>((set, get) => ({
         }
       }
 
+      const CONTEXT_TURNS = 8;
+      const MAX_TURN_CHARS = 1800;
       const messageHistory = (get().messages[currentSessionId!] || [])
-        .filter((m) => m.id !== assistantMsgId)
-        .map((m) => ({ role: m.role, content: m.content }));
+        .filter((m) => m.id !== assistantMsgId && (m.role === 'user' || m.role === 'assistant'))
+        .map((m) => ({
+          role: m.role,
+          content:
+            m.content.length > MAX_TURN_CHARS
+              ? m.content.slice(0, MAX_TURN_CHARS) + '\n... [truncated]'
+              : m.content,
+        }))
+        .slice(-CONTEXT_TURNS);
 
       let accumulatedContent = '';
       let accumulatedReasoning = isSwarmMode && swarmDecisionReason
@@ -459,27 +529,13 @@ export const useChatStore = create<ChatState>((set, get) => ({
       if (ragState.enabled) {
         try {
           ragState.ingestEnvironment(activeEnv);
-          const retrieved = ragState.contextForQuery(text.trim(), 6);
-          ragContext = retrieved.context;
+          const retrieved = ragState.contextForQuery(text.trim(), 4);
+          ragContext = retrieved.context.slice(0, 2400);
           ragCitations = retrieved.citations;
         } catch (e) {
           console.warn('[chat] RAG retrieve failed:', e);
         }
       }
-
-      // When RAG is off, inject truncated file dumps. When RAG is on, retrieved chunks replace the dump.
-      const activeFilesContext = ragState.enabled
-        ? ''
-        : existingFiles.length > 0
-        ? existingFiles.map((f) => {
-            const file = activeEnv!.files[f];
-            if (!file?.content) return '';
-            const snippet = file.content.length > 8000
-              ? file.content.slice(0, 8000) + '\n... [Content truncated for length]'
-              : file.content;
-            return `========================================\nFILE: ${f} (${file.language || 'text'})\n========================================\n${snippet}\n========================================`;
-          }).filter(Boolean).join('\n\n')
-        : '';
 
       const ragSection = ragContext
         ? `
@@ -494,63 +550,13 @@ LOCAL RAG is enabled but retrieved no passages for this query. Do not invent clu
 `
         : '';
 
-      const antiHallucinationSection = isAntiHallucination ? `
-CRITICAL ZERO-HALLUCINATION & FACTUAL GROUNDING PROTOCOL [ACTIVE]:
-You are strictly anchored to empirical truth, verified standard libraries, and concrete sandbox files.
-Confabulation, guessing, and synthetic hallucination are strictly prohibited.
+      const antiHallucinationSection = isAntiHallucination
+        ? `ZERO-HALLUCINATION: do not invent APIs, flags, files, or numbers. Sandbox files:\n${activeFilesSummary}\n`
+        : '';
 
-1. ABSOLUTE FACTUALITY & CODE VERIFICATION:
-   - NEVER fabricate or invent Python/Node/Rust/Go/Bash functions, class methods, CLI flags, or attributes that do not exist.
-   - If an API, syntax, or parameter is uncertain, EXPLICITLY state your uncertainty. Never pretend to know something you do not.
-   - NEVER invent synthetic benchmark numbers, non-existent URLs, or fabricated research citations.
-   - Do NOT assume any fictional hardware or fake personas. Answer technically, directly, and accurately.
-
-2. PHYSICAL SANDBOX GROUNDING (ACTUAL WORKSPACE FILES):
-The following are the exact files currently existing in the active environment ("${envDisplayName}"):
-${activeFilesSummary}
-
-${activeFilesContext ? `ACTUAL FILE CONTENTS IN WORKSPACE:\n${activeFilesContext}\n\nWhen modifying or referencing these files, base your answers strictly and verbatim on their actual contents shown above. Do NOT make up different code or pretend files contain things they do not.` : ''}
-${ragSection}
-
-3. CHAIN-OF-VERIFICATION (COV) IN INTERNAL REASONING:
-   - In your internal <think> reasoning, execute an explicit verification pass:
-     • Verify every import and syntax exists in real standard libraries or active workspace.
-     • Check function argument types and return contracts.
-     • Eliminate any placeholders, stubs, or "TODO" shortcuts.
-` : '';
-
-      const systemPrompt = `You are an expert AI software engineer, developer, and technical assistant.
-Your answers must be 100% truthful, factual, verifiable, and accurate.
-You NEVER make things up. You NEVER fabricate facts, code, APIs, CLI flags, benchmark numbers, or non-existent files.
-If information is missing, you state clearly that you do not have that information rather than guessing.
-${antiHallucinationSection}
-CRITICAL CODE EXECUTION & SANDBOX QUALITY RULES:
-The user can spin up a live temporary environment at any time to build, run, and test the files you output. Every piece of code you write must execute flawlessly on the first run.
-
-1. FILE STRUCTURE & EXPLICIT NAMING:
-   - ALWAYS specify the exact relative filepath in every markdown code fence header.
-     Example: \`\`\`python calculator.py
-     Example: \`\`\`python test_calculator.py
-     Example: \`\`\`typescript src/index.ts
-     Example: \`\`\`json package.json
-   - Standard naming conventions:
-     • Python entrypoint/logic: main.py, app.py, or <module>.py
-     • Python tests: test_<module>.py or tests/test_<module>.py
-     • Node / TypeScript: src/<module>.ts, tests in src/<module>.test.ts, entrypoint in index.ts
-     • Shell scripts: <tool>.sh with proper #!/usr/bin/env bash header
-     • Web apps: index.html, style.css, app.js
-
-2. TEST READINESS & FIRST-PASS RELIABILITY:
-   - When writing code, ALWAYS write both the core implementation file AND a corresponding test suite file (e.g. calculator.py + test_calculator.py).
-   - Use standard pytest format for Python tests (def test_<feature>(): assert ...).
-   - In test files, ensure relative imports match the sandbox root directory (e.g. "from calculator import add" when calculator.py is in the root).
-   - Prefer Python standard library modules (os, sys, json, math, re, pathlib, typing, unittest) and standard pytest so tests execute instantly without requiring manual pip installs.
-   - If third-party dependencies are required, explicitly provide a requirements.txt or package.json.
-
-3. PRODUCTION IMPLEMENTATION RIGOR:
-   - Zero stubbing: NEVER write "...", "# TODO: add implementation", "# rest of code here", or empty pass functions. The code must be 100% complete and operational.
-   - Include type hints, parameter docstrings, and robust error handling.
-   - Deterministic and testable: Avoid hardcoded external network calls or blocking loops in unit tests; use mocking or self-contained fixtures.`;
+      const systemPrompt = `You are Spark, an expert software engineer. Be truthful. If you lack a fact, say so.
+${antiHallucinationSection}${ragSection}
+CODE RULES: put the exact relative path in every fence (\`\`\`python app.py). Ship complete files plus tests. No TODOs or stubs. Prefer stdlib.`;
 
       const meshState = useMeshStore.getState();
       const activeEp = meshState.getActiveEndpoint?.() || meshState.candidates.find((c) => c.host === activeHost);
@@ -566,6 +572,7 @@ The user can spin up a live temporary environment at any time to build, run, and
         apiKey,
         temperature: isAntiHallucination ? 0.0 : 0.7,
         antiHallucination: isAntiHallucination,
+        max_tokens: 8192,
         messages: [
           {
             role: 'system',
@@ -661,27 +668,66 @@ The user can spin up a live temporary environment at any time to build, run, and
                 }
               }
 
+              const stillMine = state.activeAbortController === controller;
               return {
                 messages: {
                   ...state.messages,
                   [currentSessionId!]: sessionMsgs,
                 },
                 environments: nextEnvironments,
-                isStreaming: false,
-                activeAbortController: null,
+                ...(stillMine
+                  ? {
+                      isStreaming: false,
+                      streamingSessionId: null,
+                      activeAbortController: null,
+                    }
+                  : {}),
               };
             });
             void get().flushSave();
           },
           onError: (error: Error) => {
             console.error('Streaming error in ChatStore:', error);
-            set({ isStreaming: false, activeAbortController: null });
+            set((state) => {
+              const sessionMsgs = [...(state.messages[currentSessionId!] || [])];
+              const lastIdx = sessionMsgs.findIndex((m) => m.id === assistantMsgId);
+              if (lastIdx !== -1) {
+                const prev = sessionMsgs[lastIdx].content || '';
+                sessionMsgs[lastIdx] = {
+                  ...sessionMsgs[lastIdx],
+                  content: prev || error.message,
+                };
+              }
+              const stillMine = state.activeAbortController === controller;
+              return {
+                messages: {
+                  ...state.messages,
+                  [currentSessionId!]: sessionMsgs,
+                },
+                ...(stillMine
+                  ? {
+                      isStreaming: false,
+                      streamingSessionId: null,
+                      activeAbortController: null,
+                    }
+                  : {}),
+              };
+            });
+            void get().flushSave();
           },
         },
       });
     } catch (error) {
       console.error('Send message failure:', error);
-      set({ isStreaming: false, activeAbortController: null });
+      set((state) =>
+        state.activeAbortController === controller
+          ? {
+              isStreaming: false,
+              streamingSessionId: null,
+              activeAbortController: null,
+            }
+          : state
+      );
     }
   },
 
@@ -690,7 +736,16 @@ The user can spin up a live temporary environment at any time to build, run, and
     if (controller) {
       controller.abort();
     }
-    set({ isStreaming: false, activeAbortController: null });
+    try {
+      useSwarmStore.getState().cancelSwarm();
+    } catch {
+      /* swarm optional */
+    }
+    set({
+      isStreaming: false,
+      streamingSessionId: null,
+      activeAbortController: null,
+    });
     void get().flushSave();
   },
 
@@ -720,11 +775,23 @@ The user can spin up a live temporary environment at any time to build, run, and
           return s;
         });
 
+        const savedActive =
+          typeof parsed.activeSessionId === 'string' &&
+          sessions.some((s) => s.id === parsed.activeSessionId)
+            ? parsed.activeSessionId
+            : sessions.length > 0
+            ? sessions[0].id
+            : null;
+
         set({
           sessions,
           messages,
           environments,
-          activeSessionId: sessions.length > 0 ? sessions[0].id : null,
+          activeSessionId: savedActive,
+          antiHallucination:
+            typeof parsed.antiHallucination === 'boolean'
+              ? parsed.antiHallucination
+              : true,
         });
 
         for (const env of Object.values(environments)) {
@@ -819,16 +886,27 @@ Ready for streaming completions.`,
       clearTimeout(saveTimer);
       saveTimer = null;
     }
-    try {
-      const { sessions, messages, environments } = get();
-      await AsyncStorage.setItem(
-        STORAGE_KEY,
-        JSON.stringify({ sessions, messages, environments })
-      );
-    } catch (e) {
-      persistDirty = true;
-      console.error('Failed to persist chat history', e);
-    }
+    saveQueue = saveQueue
+      .then(async () => {
+        const { sessions, messages, environments, antiHallucination, activeSessionId } =
+          get();
+        const pruned = pruneVaultForStorage(sessions, messages, environments);
+        await AsyncStorage.setItem(
+          STORAGE_KEY,
+          JSON.stringify({
+            sessions: pruned.sessions,
+            messages: pruned.messages,
+            environments: pruned.environments,
+            antiHallucination,
+            activeSessionId,
+          })
+        );
+      })
+      .catch((e) => {
+        persistDirty = true;
+        console.error('Failed to persist chat history', e);
+      });
+    await saveQueue;
   },
 
   flushSave: async () => {

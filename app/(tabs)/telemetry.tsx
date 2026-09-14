@@ -52,11 +52,11 @@ export default function TelemetryScreen() {
     setToastMsg('Probed all mesh endpoints');
   };
 
-  const handleSelectHost = (host: string, name: string) => {
+  const handleSelectHost = (host: string, name: string, port?: number) => {
     try {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     } catch (e) {}
-    setActiveHost(host);
+    setActiveHost(host, port);
     setToastMsg(`Switched route to ${name} (${host})`);
   };
 
@@ -66,15 +66,21 @@ export default function TelemetryScreen() {
     return Colors.brand.rose;
   };
 
-  const vramPercent = (telemetry.vramUsedGb / telemetry.vramTotalGb) * 100;
-  const powerPercent = (telemetry.powerDrawWatts / telemetry.powerLimitWatts) * 100;
+  const vramPercent =
+    telemetry.vramTotalGb > 0 ? (telemetry.vramUsedGb / telemetry.vramTotalGb) * 100 : 0;
+  const powerPercent =
+    telemetry.powerLimitWatts > 0
+      ? (telemetry.powerDrawWatts / telemetry.powerLimitWatts) * 100
+      : 0;
+  const unified = telemetry.memoryKind === 'unified-lpddr5x';
+  const specGb = telemetry.unifiedSpecGb || 128;
 
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
       <HeaderBar
         onOpenDrawer={() => setDrawerOpen(true)}
-        title="Cloud Telemetry"
-        subtitle="H100 SXM5"
+        title="Spark Telemetry"
+        subtitle="GB10"
       />
 
       <ScrollView
@@ -95,7 +101,9 @@ export default function TelemetryScreen() {
             <View>
               <Text style={styles.bannerTitle}>{telemetry.gpuModel}</Text>
               <Text style={styles.bannerSub}>
-                High-Throughput NVLink Fabric • FP8 / NVFP4 Tensor Core Accelerators
+                {unified
+                  ? `Grace Blackwell · ${specGb} GB coherent LPDDR5x · 273 GB/s · FP4 / NVFP4`
+                  : 'High-Throughput NVLink Fabric • FP8 / NVFP4 Tensor Core Accelerators'}
               </Text>
             </View>
           </View>
@@ -131,10 +139,14 @@ export default function TelemetryScreen() {
           />
 
           <MetricGauge
-            label="Unified VRAM"
+            label={unified ? 'Unified Memory' : 'VRAM'}
             value={telemetry.vramUsedGb.toFixed(1)}
             unit={`/ ${telemetry.vramTotalGb.toFixed(1)} GB`}
-            sublabel={`${vramPercent.toFixed(0)}% High-Bandwidth Memory`}
+            sublabel={
+              unified
+                ? `${vramPercent.toFixed(0)}% of ${telemetry.vramTotalGb.toFixed(1)} GB CUDA-visible (${specGb} GB LPDDR5x spec)`
+                : `${vramPercent.toFixed(0)}% device memory`
+            }
             progressPercent={vramPercent}
             statusColor={Colors.brand.emerald}
             icon={<Layers size={16} color={Colors.brand.emerald} />}
@@ -146,7 +158,7 @@ export default function TelemetryScreen() {
             label="Power Consumption"
             value={telemetry.powerDrawWatts}
             unit={`/ ${telemetry.powerLimitWatts} W`}
-            sublabel={`${powerPercent.toFixed(0)}% Peak Thermal Envelope`}
+            sublabel={`${powerPercent.toFixed(0)}% of ${unified ? '140 W GB10 SOC TDP' : 'peak envelope'}`}
             progressPercent={powerPercent}
             statusColor={Colors.brand.sky}
             icon={<Zap size={16} color={Colors.brand.sky} />}
@@ -156,7 +168,11 @@ export default function TelemetryScreen() {
             label="Engine Clock"
             value={telemetry.gpuClockMhz}
             unit="MHz"
-            sublabel={`Tensor Cores: ${telemetry.tensorCoresActive} Active`}
+            sublabel={
+              unified
+                ? `${telemetry.tensorCoresActive} SMs · mem ${telemetry.memoryClockMhz} MT/s`
+                : `Tensor Cores: ${telemetry.tensorCoresActive} Active`
+            }
             statusColor={Colors.brand.amber}
             icon={<Radio size={16} color={Colors.brand.amber} />}
           />
@@ -182,7 +198,7 @@ export default function TelemetryScreen() {
               <TouchableOpacity
                 key={ep.id}
                 style={[styles.meshRow, isSelected && styles.meshRowActive]}
-                onPress={() => handleSelectHost(ep.host, ep.name)}
+                onPress={() => handleSelectHost(ep.host, ep.name, ep.port)}
                 activeOpacity={0.7}
               >
                 <View style={styles.meshLeft}>

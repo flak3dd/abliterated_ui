@@ -40,6 +40,8 @@
     "preflight": "node ./scripts/preflight.mjs",
     "agent": "node ./scripts/spark-agent.mjs",
     "start-services": "node ./scripts/start-services.mjs",
+    "start-services:chat-max": "GPU_MEMORY_PROFILE=chat-max node ./scripts/start-services.mjs",
+    "start-services:image-max": "GPU_MEMORY_PROFILE=image-max node ./scripts/start-services.mjs",
     "sandbox": "node ./scripts/sandbox-runner.mjs",
     "test-ssh": "node ./scripts/test-ssh.mjs",
     "test-controller": "node ./scripts/test-controller.mjs",

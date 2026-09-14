@@ -3,7 +3,11 @@
 OpenAI-compatible high-throughput engine on Blackwell GB10 with MTP and FP8 KV-cache.
 
 ## Served models
-- Primary: qwen-abliterated — Qwen 3.6 35B-A3B NVFP4+MTP. Recipe container qwen-abliterated. max_model_len 65536. gpuMemoryUtilization 0.6. kvCacheDtype fp8. reasoningParser qwen3. toolCallParser qwen3_coder.
+- Primary: qwen-abliterated — Qwen 3.6 35B-A3B NVFP4+MTP. Recipe container qwen-abliterated. kvCacheDtype fp8. reasoningParser qwen3. toolCallParser qwen3_coder.
+- GPU_MEMORY_PROFILE=balanced (default): max_model_len 16384, gpuMemoryUtilization 0.48 (headroom for image bridge + Comfy).
+- GPU_MEMORY_PROFILE=chat-max: skip Comfy; vLLM `--gpu-memory-utilization 0.82 --max-model-len 32768 --enable-prefix-caching --enable-chunked-prefill --max-num-seqs 8`.
+- GPU_MEMORY_PROFILE=image-max: keep Comfy + :7860; leave vLLM at 0.48 / 16k.
+- Client chat uses a 16-turn sliding window, max_tokens 4096, and capped file dumps so KV-cache is not wasted on stale history.
 - Secondary recipe (when loaded): gpt-oss-120b-abliterated (120B MXFP4).
 - A live probe of GET /v1/models on 192.168.4.103:8000 has returned only qwen-abliterated. Do not assume other text models are resident unless /v1/models lists them.
 - There is no /v1/embeddings endpoint on this vLLM process (HTTP 404). Local RAG therefore uses on-device BM25 plus hashed dense vectors until an embedding model is served.

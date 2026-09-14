@@ -65,8 +65,8 @@ export const MatrixCanvasView: React.FC<MatrixCanvasViewProps> = ({
       speedMultiplier,
       glyphSet,
       audioEnabled: variant === 'director' ? audioEnabled : false,
-      crtShader,
-      bloomGlow,
+      crtShader: variant === 'director' ? crtShader : false,
+      bloomGlow: variant === 'director' ? bloomGlow : false,
       interactiveTouch: variant === 'director' ? interactiveTouch : false,
     });
     renderer.setVariant(variant);
@@ -110,6 +110,13 @@ export const MatrixCanvasView: React.FC<MatrixCanvasViewProps> = ({
     const ro = new ResizeObserver(handleResize);
     ro.observe(container);
 
+    const onVisibility = () => {
+      if (typeof document === 'undefined') return;
+      if (document.hidden) renderer.stop();
+      else renderer.start();
+    };
+    document.addEventListener('visibilitychange', onVisibility);
+
     if (variant === 'director') {
       canvas.addEventListener('mousemove', handleMouseMove);
       canvas.addEventListener('mouseleave', handleMouseLeave);
@@ -123,6 +130,7 @@ export const MatrixCanvasView: React.FC<MatrixCanvasViewProps> = ({
     return () => {
       renderer.stop();
       window.removeEventListener('resize', handleResize);
+      document.removeEventListener('visibilitychange', onVisibility);
       ro.disconnect();
       canvas?.removeEventListener('mousemove', handleMouseMove);
       canvas?.removeEventListener('mouseleave', handleMouseLeave);

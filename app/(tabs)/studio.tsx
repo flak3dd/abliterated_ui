@@ -117,8 +117,16 @@ export default function StudioScreen() {
     enhancePrompt,
     exportToSandbox,
     selectFromHistory,
+    refreshImageModels,
+    modelAvailability,
+    loadedModelId,
+    warmingModelId,
     clearHistory,
   } = useStudioStore();
+
+  useEffect(() => {
+    void refreshImageModels();
+  }, [refreshImageModels]);
 
   const showToast = useCallback((msg: string, type: 'success' | 'info' | 'warning' = 'info') => {
     setToastType(type);
@@ -368,7 +376,7 @@ export default function StudioScreen() {
                 <View style={styles.activeEngineDot} />
                 <Text style={styles.subBarTitle}>CREATIVE DIFFUSION WORKSTATION</Text>
                 <Text style={styles.subBarSep}>•</Text>
-                <Text style={styles.subBarSpecs}>GB10 Blackwell Unified HBM3e</Text>
+                <Text style={styles.subBarSpecs}>GB10 · 128 GB unified LPDDR5x</Text>
               </View>
 
               <View style={styles.subBarRight}>
@@ -518,6 +526,9 @@ export default function StudioScreen() {
                     onSelect={setSelectedModel}
                     disabled={isGenerating}
                     isGrid={true}
+                    availability={modelAvailability}
+                    warmingId={warmingModelId}
+                    loadedId={loadedModelId}
                   />
                 </View>
 
@@ -920,6 +931,9 @@ export default function StudioScreen() {
                   selected={selectedModel}
                   onSelect={setSelectedModel}
                   disabled={isGenerating}
+                  availability={modelAvailability}
+                  warmingId={warmingModelId}
+                  loadedId={loadedModelId}
                 />
               </View>
 

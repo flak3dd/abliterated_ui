@@ -117,18 +117,25 @@ const DEFAULT_ENDPOINTS: Endpoint[] = [
   },
 ];
 
+const GB10_UNIFIED_SPEC_GB = 128;
+const GB10_CUDA_VISIBLE_GIB = 121.7;
+const GB10_SOC_TDP_W = 140;
+const GB10_CLOCK_MHZ = 2418;
+
 const INITIAL_TELEMETRY: HardwareTelemetry = {
-  gpuModel: 'NVIDIA DGX Spark GB10 Unified HBM',
+  gpuModel: 'NVIDIA GB10 · 128 GB unified LPDDR5x',
   gpuTemp: 44,
   gpuTempMax: 85,
-  vramUsedGb: 23.6,
-  vramTotalGb: 24.0,
-  powerDrawWatts: 138,
-  powerLimitWatts: 300,
-  gpuClockMhz: 2430,
-  memoryClockMhz: 3200,
-  tensorCoresActive: 96,
-  busUsagePercent: 12,
+  vramUsedGb: 0,
+  vramTotalGb: GB10_CUDA_VISIBLE_GIB,
+  unifiedSpecGb: GB10_UNIFIED_SPEC_GB,
+  memoryKind: 'unified-lpddr5x',
+  powerDrawWatts: 11,
+  powerLimitWatts: GB10_SOC_TDP_W,
+  gpuClockMhz: GB10_CLOCK_MHZ,
+  memoryClockMhz: 8533,
+  tensorCoresActive: 48,
+  busUsagePercent: 0,
   uptimeSeconds: 0,
 };
 
@@ -204,7 +211,10 @@ async function fetchRealVllmMetrics(host: string, port = 8000) {
     };
 
     return {
-      gpuCacheUsage: getMetric('vllm:gpu_cache_usage_factor') ?? 0,
+      gpuCacheUsage:
+        getMetric('vllm:kv_cache_usage_perc') ??
+        getMetric('vllm:gpu_cache_usage_factor') ??
+        0,
       requestsRunning: getMetric('vllm:num_requests_running') ?? 0,
       requestsWaiting: getMetric('vllm:num_requests_waiting') ?? 0,
       processStartTime: getMetric('process_start_time_seconds') ?? null,
@@ -216,6 +226,48 @@ async function fetchRealVllmMetrics(host: string, port = 8000) {
   }
 }
 
+function telemetryFromControllerGpu(
+  gpu: Record<string, any>,
+  prev: HardwareTelemetry
+): HardwareTelemetry {
+  const name = String(gpu.name || 'NVIDIA GB10');
+  const isUnified =
+    gpu.memoryKind === 'unified-lpddr5x' ||
+    /GB10|DGX Spark/i.test(name) ||
+    !gpu.vramTotalMb;
+
+  const specGb = Number(gpu.unifiedSpecGb) || (isUnified ? GB10_UNIFIED_SPEC_GB : undefined);
+  let totalGb = Number(gpu.unifiedTotalGb);
+  if (!totalGb) {
+    const smiTotalMb = Number(gpu.vramTotalMb) || 0;
+    totalGb = smiTotalMb > 0 ? smiTotalMb / 1024 : isUnified ? GB10_CUDA_VISIBLE_GIB : prev.vramTotalGb;
+  }
+  let usedGb =
+    gpu.unifiedUsedGb != null && gpu.unifiedUsedGb !== ''
+      ? Number(gpu.unifiedUsedGb)
+      : (Number(gpu.vramUsedMb) || 0) / 1024;
+  if (!Number.isFinite(usedGb) || usedGb < 0) usedGb = 0;
+
+  let powerLimit = Number(gpu.powerLimitW) || 0;
+  if (!powerLimit && isUnified) powerLimit = GB10_SOC_TDP_W;
+
+  return {
+    ...prev,
+    gpuModel: isUnified ? name.replace(/\s+$/, '') + ' · 128 GB unified LPDDR5x' : name,
+    gpuTemp: Math.round(Number(gpu.tempC) || 0),
+    vramUsedGb: Number(usedGb.toFixed(1)),
+    vramTotalGb: Number(totalGb.toFixed(1)),
+    unifiedSpecGb: specGb,
+    memoryKind: isUnified ? 'unified-lpddr5x' : 'discrete-vram',
+    powerDrawWatts: Math.round(Number(gpu.powerDrawW) || 0),
+    powerLimitWatts: Math.round(powerLimit),
+    busUsagePercent: Math.round(Number(gpu.gpuUtilPct) || 0),
+    gpuClockMhz: isUnified ? GB10_CLOCK_MHZ : prev.gpuClockMhz,
+    memoryClockMhz: isUnified ? 8533 : prev.memoryClockMhz,
+    tensorCoresActive: isUnified ? 48 : prev.tensorCoresActive,
+  };
+}
+
 async function fetchRealControllerGpu(host: string) {
   const urls = [
     `http://127.0.0.1:17325/api/status`,
@@ -224,7 +276,7 @@ async function fetchRealControllerGpu(host: string) {
   for (const url of urls) {
     try {
       const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 1800);
+      const timeout = setTimeout(() => controller.abort(), 25000);
       const res = await fetch(url, { signal: controller.signal });
       clearTimeout(timeout);
       if (res.ok) {
@@ -451,31 +503,24 @@ export const useMeshStore = create<MeshState>((set, get) => ({
       let realTelemetry = { ...get().telemetry };
 
       if (controllerGpu) {
-        realTelemetry = {
-          ...realTelemetry,
-          gpuModel: controllerGpu.name || 'NVIDIA GB10 Blackwell',
-          gpuTemp: Math.round(controllerGpu.tempC || 0),
-          vramUsedGb: Number(((controllerGpu.vramUsedMb || 0) / 1024).toFixed(1)),
-          vramTotalGb: Number(((controllerGpu.vramTotalMb || 24576) / 1024).toFixed(1)),
-          powerDrawWatts: Math.round(controllerGpu.powerDrawW || 0),
-          powerLimitWatts: Math.round(controllerGpu.powerLimitW || 300),
-          busUsagePercent: Math.round(controllerGpu.gpuUtilPct || 0),
-        };
+        realTelemetry = telemetryFromControllerGpu(controllerGpu, realTelemetry);
       } else if (vllmMetrics) {
         const nowSec = Date.now() / 1000;
-        const uptimeSec = vllmMetrics.processStartTime ? Math.round(nowSec - vllmMetrics.processStartTime) : 0;
-        const activeVram = 22.4 + (vllmMetrics.gpuCacheUsage * 1.4);
-
+        const uptimeSec = vllmMetrics.processStartTime
+          ? Math.round(nowSec - vllmMetrics.processStartTime)
+          : 0;
         realTelemetry = {
           ...realTelemetry,
-          gpuModel: 'NVIDIA DGX Spark GB10 Unified HBM',
-          gpuTemp: vllmMetrics.requestsRunning > 0 ? 54 : 44,
-          vramUsedGb: Number(activeVram.toFixed(1)),
-          vramTotalGb: 24.0,
-          powerDrawWatts: vllmMetrics.requestsRunning > 0 ? 210 : 138,
-          powerLimitWatts: 300,
-          busUsagePercent: Math.min(100, Math.round(vllmMetrics.gpuCacheUsage * 100)),
+          gpuModel: 'NVIDIA GB10 · 128 GB unified LPDDR5x',
+          gpuTemp: vllmMetrics.requestsRunning > 0 ? 54 : realTelemetry.gpuTemp,
+          vramTotalGb: GB10_CUDA_VISIBLE_GIB,
+          unifiedSpecGb: GB10_UNIFIED_SPEC_GB,
+          memoryKind: 'unified-lpddr5x',
+          powerLimitWatts: GB10_SOC_TDP_W,
+          busUsagePercent: Math.min(100, Math.round((vllmMetrics.gpuCacheUsage || 0) * 100)),
           uptimeSeconds: uptimeSec,
+          gpuClockMhz: GB10_CLOCK_MHZ,
+          tensorCoresActive: 48,
         };
       }
 

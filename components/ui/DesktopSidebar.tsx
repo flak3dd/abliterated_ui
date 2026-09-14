@@ -11,6 +11,7 @@ import { useRouter, usePathname } from 'expo-router';
 import {
   MessageSquare,
   Sparkles,
+  CreditCard,
   Activity,
   Mic,
   Radio,
@@ -94,6 +95,7 @@ export const DesktopSidebar: React.FC<DesktopSidebarProps> = ({ onOpenEnvModal }
   const navItems = [
     { label: 'Chat', path: '/', icon: MessageSquare },
     { label: 'Image Studio', path: '/studio', icon: Sparkles },
+    { label: 'ID Studio', path: '/id-studio', icon: CreditCard },
     { label: 'Telemetry', path: '/telemetry', icon: Activity },
     { label: 'Voice Mode', path: '/voice', icon: Mic },
     { label: 'Radar Mesh', path: '/radar', icon: Radio },

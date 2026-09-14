@@ -26,6 +26,7 @@ interface RagState {
   lastIndexedAt: number | null;
   lastQueryHits: RagHit[];
   datasetVersion: string;
+  sandboxFingerprints: Record<string, string>;
 
   loadFromStorage: () => Promise<void>;
   persist: () => Promise<void>;
@@ -62,6 +63,20 @@ function seedDocuments(): RagDocument[] {
     updatedAt: Date.now(),
     contentHash: hashContent(record.content),
   }));
+}
+
+function envFingerprint(env: SessionEnvironment): string {
+  return Object.values(env.files || {})
+    .filter((file) => {
+      if (!file?.content || !file.path || file.content.length < 8) return false;
+      if (file.content.startsWith('data:')) return false;
+      if (/^image\//i.test(file.language || '')) return false;
+      if (/\.(png|jpe?g|gif|webp|svg|ico|bin|woff2?|ttf)$/i.test(file.path)) return false;
+      return true;
+    })
+    .map((file) => file.path + ':' + hashContent(file.content))
+    .sort()
+    .join('|');
 }
 
 function mergeSeeds(documents: RagDocument[]): RagDocument[] {
@@ -103,6 +118,7 @@ export const useRagStore = create<RagState>((set, get) => ({
   lastIndexedAt: null,
   lastQueryHits: [],
   datasetVersion: KNOWLEDGE_DATASET_VERSION,
+  sandboxFingerprints: {},
 
   loadFromStorage: async () => {
     try {
@@ -189,11 +205,19 @@ export const useRagStore = create<RagState>((set, get) => ({
 
   ingestEnvironment: (env) => {
     if (!env) return;
-    let docs = get().documents.filter((d) => !(d.source === 'sandbox' && d.envId === env.id));
+    const fp = envFingerprint(env);
+    if (get().sandboxFingerprints[env.id] === fp) return;
+
+    let docs = get().documents.filter(
+      (d) => !(d.source === 'sandbox' && d.envId === env.id)
+    );
     const files = Object.values(env.files || {});
     for (const file of files) {
       if (!file?.content || !file.path) continue;
       if (file.content.length < 8) continue;
+      if (file.content.startsWith('data:')) continue;
+      if (/^image\//i.test(file.language || '')) continue;
+      if (/\.(png|jpe?g|gif|webp|svg|ico|bin|woff2?|ttf)$/i.test(file.path)) continue;
       docs = upsertDocument(docs, {
         id: 'sandbox:' + env.id + ':' + file.path,
         title: file.path,
@@ -204,14 +228,22 @@ export const useRagStore = create<RagState>((set, get) => ({
         updatedAt: file.updatedAt || Date.now(),
       });
     }
-    set({ ...rebuild(docs) });
+    set({
+      ...rebuild(docs),
+      sandboxFingerprints: { ...get().sandboxFingerprints, [env.id]: fp },
+    });
     void get().persist();
   },
 
   removeDocument: (id) => {
     const target = get().documents.find((d) => d.id === id);
     if (!target || target.source === 'seed') return;
-    set({ ...rebuild(get().documents.filter((d) => d.id !== id)) });
+    const fingerprints = { ...get().sandboxFingerprints };
+    if (target.envId) delete fingerprints[target.envId];
+    set({
+      ...rebuild(get().documents.filter((d) => d.id !== id)),
+      sandboxFingerprints: fingerprints,
+    });
     void get().persist();
   },
 

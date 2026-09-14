@@ -95,7 +95,9 @@ export const KnowledgePanel: React.FC = () => {
         activeOpacity={0.75}
       >
         <Text style={[styles.toggleText, enabled && styles.toggleTextOn]}>
-          {enabled ? 'RAG: ON — retrieved chunks injected into chat' : 'RAG: OFF — full file dump fallback'}
+          {enabled
+            ? 'RAG: ON — retrieved chunks injected into chat'
+            : 'RAG: OFF — file names only (no content dump)'}
         </Text>
       </TouchableOpacity>
 

@@ -1,7 +1,7 @@
 import React from 'react';
 import { Tabs } from 'expo-router';
 import { StyleSheet, Platform, View, useWindowDimensions } from 'react-native';
-import { MessageSquare, Sparkles, Activity } from 'lucide-react-native';
+import { MessageSquare, Sparkles, Activity, CreditCard } from 'lucide-react-native';
 import Colors from '../../theme/colors';
 
 export default function TabsLayout() {
@@ -37,6 +37,17 @@ export default function TabsLayout() {
           tabBarIcon: ({ color, focused }) => (
             <View style={focused ? styles.activeIconWrap : undefined}>
               <Sparkles size={20} color={color} />
+            </View>
+          ),
+        }}
+      />
+      <Tabs.Screen
+        name="id-studio"
+        options={{
+          title: 'ID Studio',
+          tabBarIcon: ({ color, focused }) => (
+            <View style={focused ? styles.activeIconWrap : undefined}>
+              <CreditCard size={20} color={color} />
             </View>
           ),
         }}

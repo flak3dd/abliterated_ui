@@ -41,9 +41,11 @@ export default function ChatScreen() {
     messages,
     activeSessionId,
     isStreaming,
+    streamingSessionId,
     sendMessage,
     stopStreaming,
   } = useChatStore();
+  const sessionStreaming = isStreaming && streamingSessionId === activeSessionId;
 
   const { status: sandboxStatus } = useSandboxStore();
 
@@ -62,7 +64,7 @@ export default function ChatScreen() {
         flatListRef.current?.scrollToEnd({ animated: true });
       }, 100);
     }
-  }, [currentMessages.length, isStreaming]);
+  }, [currentMessages.length, sessionStreaming]);
 
   const handleSelectPrompt = (prompt: string) => {
     sendMessage(prompt);
@@ -112,7 +114,7 @@ export default function ChatScreen() {
             {currentMessages.length <= 1 && (
               <SuggestionStrip
                 onSelectPrompt={handleSelectPrompt}
-                disabled={isStreaming}
+                disabled={sessionStreaming}
               />
             )}
 
@@ -124,7 +126,7 @@ export default function ChatScreen() {
               renderItem={({ item, index }) => (
                 <ChatBubble
                   message={item}
-                  isStreaming={isStreaming && index === currentMessages.length - 1}
+                  isStreaming={sessionStreaming && index === currentMessages.length - 1}
                 />
               )}
               contentContainerStyle={styles.messageListContent}
@@ -136,7 +138,7 @@ export default function ChatScreen() {
             <InputDock
               onSendMessage={handleSendMessage}
               onStopStreaming={stopStreaming}
-              isStreaming={isStreaming}
+              isStreaming={sessionStreaming}
             />
           </View>
         </KeyboardAvoidingView>

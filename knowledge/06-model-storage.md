@@ -13,5 +13,9 @@ Catalog shown in the telemetry Model Storage section. Sizes and paths are the UI
 - Qwen-Image-Edit-2511-FP8 — ~8.6 GB FP8 — spark-image/models/qwen-edit-2511 — studio id qwen-edit-2511-fp8
 - PornMaster-ComfyUI-Dolphin-SDXL — ~6.2 GB bfloat16 — ComfyUI/models/checkpoints/dolphin_master.safetensors — studio id comfy-dolphin
 
-## Hardware context (UI)
-Telemetry assumes ~2.0 TB NVMe PCIe Gen5 on Spark. GPU is NVIDIA GB10 Blackwell unified HBM. Do not invent VRAM totals; read live GET /api/status when asked for current thermals.
+## Hardware context
+- Unified memory spec: 128 GB LPDDR5x coherent (CPU+GPU), 273 GB/s, 256-bit.
+- CUDA / Linux visible pool: ~121.7 GiB (MemTotal). nvidia-smi memory.used/total is N/A on GB10.
+- Live used = MemTotal − MemAvailable from /proc/meminfo via Spark controller GET /api/status (gpu.unifiedUsedGb / gpu.unifiedTotalGb).
+- GB10 SOC TDP 140 W; system PSU 240 W. nvidia-smi power.limit is N/A; UI uses 140 W as the GPU envelope.
+- NVMe catalog in this UI assumes ~2.0 TB Gen5; actual SKUs are 1 TB or 4 TB.

@@ -331,9 +331,13 @@ export class MatrixRenderer {
 
   public start() {
     if (this.animId) return;
-    const loop = () => {
-      this.render();
+    let last = 0;
+    const loop = (t: number) => {
       this.animId = requestAnimationFrame(loop);
+      const minDt = this.variant === 'ambient' ? 1000 / 24 : 0;
+      if (minDt && t - last < minDt) return;
+      last = t;
+      this.render();
     };
     this.animId = requestAnimationFrame(loop);
   }

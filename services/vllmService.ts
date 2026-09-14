@@ -7,6 +7,43 @@ export interface StreamCallbacks {
   onError: (error: Error) => void;
 }
 
+export const SPARK_MAX_CONTEXT = 16384;
+export const SPARK_TARGET_OUTPUT = 8192;
+export const SPARK_MIN_OUTPUT = 768;
+
+export function estimateTokens(text: string): number {
+  if (!text) return 1;
+  return Math.max(1, Math.ceil(text.length / 3.4));
+}
+
+export function fitMessagesToContext(
+  messages: Array<{ role: string; content: string }>,
+  ctx = SPARK_MAX_CONTEXT,
+  targetOut = SPARK_TARGET_OUTPUT
+): { messages: Array<{ role: string; content: string }>; max_tokens: number } {
+  const overhead = 96;
+  const system = messages.filter((m) => m.role === 'system').map((m) => ({ ...m, content: m.content || '' }));
+  let rest = messages.filter((m) => m.role !== 'system').map((m) => ({ ...m, content: m.content || '' }));
+
+  const packed = () => [...system, ...rest];
+  const used = () =>
+    packed().reduce((sum, m) => sum + estimateTokens(m.content) + 6, 0) + overhead;
+  const remaining = () => ctx - used();
+
+  while (rest.length > 1 && remaining() < SPARK_MIN_OUTPUT) {
+    rest = rest.slice(1);
+  }
+  if (remaining() < SPARK_MIN_OUTPUT && system[0]) {
+    const others = rest.reduce((sum, m) => sum + estimateTokens(m.content) + 6, 0) + overhead;
+    const sysBudgetChars = Math.max(400, Math.floor((ctx - SPARK_MIN_OUTPUT - others) * 3.4));
+    if (system[0].content.length > sysBudgetChars) {
+      system[0].content = system[0].content.slice(0, sysBudgetChars) + '\n... [system truncated for context]';
+    }
+  }
+  const max_tokens = Math.max(SPARK_MIN_OUTPUT, Math.min(targetOut, remaining()));
+  return { messages: packed(), max_tokens };
+}
+
 export async function streamChatCompletion({
   host,
   port = 443,
@@ -18,6 +55,7 @@ export async function streamChatCompletion({
   temperature,
   top_p,
   antiHallucination = true,
+  max_tokens = SPARK_TARGET_OUTPUT,
 }: {
   host: string;
   port?: number;
@@ -29,6 +67,7 @@ export async function streamChatCompletion({
   temperature?: number;
   top_p?: number;
   antiHallucination?: boolean;
+  max_tokens?: number;
 }): Promise<void> {
   const url = resolveApiUrl(host, port, '/v1/chat/completions');
   const effectiveTemp = temperature !== undefined
@@ -41,6 +80,10 @@ export async function streamChatCompletion({
       ? 'meta-llama/Meta-Llama-3.1-8B-Instruct'
       : 'qwen-abliterated');
 
+  const fitted = fitMessagesToContext(messages, SPARK_MAX_CONTEXT, max_tokens);
+  let fullContent = '';
+  let reasoning = '';
+
   try {
     const response = await fetch(url, {
       method: 'POST',
@@ -50,23 +93,31 @@ export async function streamChatCompletion({
       }),
       body: JSON.stringify({
         model: selectedModel,
-        messages,
+        messages: fitted.messages,
         stream: true,
         temperature: effectiveTemp,
         top_p: top_p ?? (antiHallucination ? 1.0 : 0.95),
         repetition_penalty: 1.1,
+        max_tokens: fitted.max_tokens,
       }),
       signal: abortSignal,
     });
 
     if (!response.ok || !response.body) {
-      throw new Error(`Inference endpoint (${selectedModel}) responded with HTTP ${response.status}`);
+      const errText = await response.text().catch(() => '');
+      let detail = errText.slice(0, 400);
+      try {
+        const parsed = JSON.parse(errText);
+        detail = parsed?.error?.message || parsed?.message || detail;
+      } catch {}
+      throw new Error(
+        `Inference endpoint (${selectedModel}) HTTP ${response.status}` +
+          (detail ? ': ' + detail : '')
+      );
     }
 
     const reader = response.body.getReader();
     const decoder = new TextDecoder('utf-8');
-    let fullContent = '';
-    let reasoning = '';
     let insideThink = false;
     let buffer = '';
 
@@ -137,6 +188,7 @@ export async function streamChatCompletion({
     callbacks.onComplete(fullContent, reasoning.trim());
   } catch (err: any) {
     if (abortSignal?.aborted) {
+      callbacks.onComplete(fullContent, reasoning.trim());
       return;
     }
 

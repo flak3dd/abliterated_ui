@@ -11,12 +11,12 @@
 
 import http from 'node:http';
 import { mkdir, writeFile, rm } from 'node:fs/promises';
-import { existsSync } from 'node:fs';
 import path from 'node:path';
-import { exec } from 'node:child_process';
+import { exec, execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 
 const execP = promisify(exec);
+const execFileP = promisify(execFile);
 
 async function mapLimit(items, limit, fn) {
   const ret = new Array(items.length);
@@ -33,7 +33,7 @@ async function mapLimit(items, limit, fn) {
 }
 
 const PORT = Number(process.env.SANDBOX_PORT || 17330);
-const HOST = process.env.SANDBOX_HOST || '0.0.0.0';
+const HOST = process.env.SANDBOX_HOST || '127.0.0.1';
 const SANDBOX_BASE_LOCAL = '/tmp/spark-sandboxes';
 const SANDBOX_BASE_REMOTE = '/tmp/spark-sandboxes';
 
@@ -47,14 +47,52 @@ const C = {
   dim: '\x1b[2m',
 };
 
+function allowedOrigin(req) {
+  const origin = String(req?.headers?.origin || '');
+  try {
+    const u = new URL(origin);
+    if (u.hostname === 'localhost' || u.hostname === '127.0.0.1' || u.hostname === '[::1]') {
+      return origin;
+    }
+  } catch {
+    /* ignore */
+  }
+  return 'http://127.0.0.1';
+}
+
 function sendJson(res, statusCode, data) {
   res.writeHead(statusCode, {
     'Content-Type': 'application/json',
-    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Origin': res._aco || 'http://127.0.0.1',
     'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+    'Access-Control-Allow-Headers': 'Content-Type',
+    Vary: 'Origin',
   });
   res.end(JSON.stringify(data));
+}
+
+function safeJoin(root, rel) {
+  const clean = String(rel || '')
+    .replace(/\\/g, '/')
+    .replace(/^\/+/, '');
+  if (!clean || clean.includes('\0') || clean.split('/').includes('..')) {
+    throw new Error('Invalid sandbox path');
+  }
+  const rootAbs = path.resolve(root);
+  const abs = path.resolve(rootAbs, clean);
+  const prefix = rootAbs.endsWith(path.sep) ? rootAbs : rootAbs + path.sep;
+  if (abs !== rootAbs && !abs.startsWith(prefix)) {
+    throw new Error('Path escapes sandbox');
+  }
+  return abs;
+}
+
+async function sshRemote(script, timeout = 30000) {
+  const b64 = Buffer.from(String(script), 'utf8').toString('base64');
+  return execFileP('ssh', ['flak3dd', `echo ${b64} | base64 -d | bash`], {
+    timeout,
+    maxBuffer: 10 * 1024 * 1024,
+  });
 }
 
 async function parseJsonBody(req) {
@@ -79,11 +117,13 @@ async function parseJsonBody(req) {
 }
 
 const server = http.createServer(async (req, res) => {
+  res._aco = allowedOrigin(req);
   if (req.method === 'OPTIONS') {
     res.writeHead(204, {
-      'Access-Control-Allow-Origin': '*',
+      'Access-Control-Allow-Origin': res._aco,
       'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
-      'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+      'Access-Control-Allow-Headers': 'Content-Type',
+      Vary: 'Origin',
     });
     return res.end();
   }
@@ -115,26 +155,33 @@ const server = http.createServer(async (req, res) => {
       if (target === 'dgx_spark') {
         const remoteDir = `${SANDBOX_BASE_REMOTE}/${envId}`;
         const commands = [];
-        if (replaceAll) commands.push(`rm -rf "${remoteDir}"`);
-        commands.push(`mkdir -p "${remoteDir}"`);
+        if (replaceAll) commands.push(`rm -rf ${JSON.stringify(remoteDir)}`);
+        commands.push(`mkdir -p ${JSON.stringify(remoteDir)}`);
         for (const rel of deleted) {
-          const cleanPath = String(rel).replace(/\\/g, '/').replace(/^\/+/, '');
-          if (cleanPath) commands.push(`rm -f "${remoteDir}/${cleanPath}"`);
+          try {
+            const abs = safeJoin(remoteDir, rel);
+            commands.push(`rm -f ${JSON.stringify(abs)}`);
+          } catch {
+            /* skip bad path */
+          }
         }
 
         for (const [filePath, fileData] of fileEntries) {
-          const cleanPath = filePath.replace(/\\/g, '/');
-          const dir = path.dirname(cleanPath);
-          if (dir && dir !== '.') {
-            commands.push(`mkdir -p "${remoteDir}/${dir}"`);
+          let abs;
+          try {
+            abs = safeJoin(remoteDir, filePath);
+          } catch {
+            continue;
           }
+          const dir = path.dirname(abs);
+          commands.push(`mkdir -p ${JSON.stringify(dir)}`);
           const b64 = Buffer.from(fileData.content || '').toString('base64');
-          commands.push(`echo "${b64}" | base64 -d > "${remoteDir}/${cleanPath}"`);
+          commands.push(`echo ${b64} | base64 -d > ${JSON.stringify(abs)}`);
         }
 
         const script = commands.join(' && ');
         try {
-          await execP(`ssh flak3dd '${script.replace(/'/g, "'\\''")}'`, { timeout: 30000 });
+          await sshRemote(script, 30000);
           return sendJson(res, 200, {
             ok: true,
             envId,
@@ -156,14 +203,15 @@ const server = http.createServer(async (req, res) => {
         await mkdir(localDir, { recursive: true });
 
         for (const rel of deleted) {
-          const cleanPath = String(rel).replace(/\\/g, '/').replace(/^\/+/, '');
-          if (!cleanPath) continue;
-          await rm(path.join(localDir, cleanPath), { force: true });
+          try {
+            await rm(safeJoin(localDir, rel), { force: true });
+          } catch {
+            /* skip */
+          }
         }
 
         await mapLimit(fileEntries, 8, async ([filePath, fileData]) => {
-          const cleanPath = filePath.replace(/\\/g, '/');
-          const absPath = path.join(localDir, cleanPath);
+          const absPath = safeJoin(localDir, filePath);
           await mkdir(path.dirname(absPath), { recursive: true });
           await writeFile(absPath, fileData.content || '', 'utf8');
         });
@@ -197,10 +245,10 @@ const server = http.createServer(async (req, res) => {
       if (target === 'dgx_spark') {
         const remoteDir = `${SANDBOX_BASE_REMOTE}/${envId}`;
         try {
-          const { stdout, stderr } = await execP(`ssh flak3dd 'cd "${remoteDir}" && ${testCmd}'`, {
-            timeout: 60000,
-            maxBuffer: 10 * 1024 * 1024,
-          });
+          const { stdout, stderr } = await sshRemote(
+            `mkdir -p ${JSON.stringify(remoteDir)} && cd ${JSON.stringify(remoteDir)} && ${testCmd}`,
+            60000
+          );
           return sendJson(res, 200, { ok: true, stdout, stderr, exitCode: 0 });
         } catch (err) {
           return sendJson(res, 200, {
@@ -213,6 +261,7 @@ const server = http.createServer(async (req, res) => {
       } else {
         const localDir = path.join(SANDBOX_BASE_LOCAL, envId);
         try {
+          await mkdir(localDir, { recursive: true });
           const { stdout, stderr } = await execP(testCmd, {
             cwd: localDir,
             timeout: 60000,
@@ -247,7 +296,10 @@ const server = http.createServer(async (req, res) => {
       if (target === 'dgx_spark') {
         const remoteDir = `${SANDBOX_BASE_REMOTE}/${envId}`;
         try {
-          const { stdout, stderr } = await execP(`ssh flak3dd 'cd "${remoteDir}" && ${buildCmd}'`, { timeout: 30000 });
+          const { stdout, stderr } = await sshRemote(
+            `mkdir -p ${JSON.stringify(remoteDir)} && cd ${JSON.stringify(remoteDir)} && ${buildCmd}`,
+            30000
+          );
           return sendJson(res, 200, { ok: true, output: stdout || stderr || 'Build OK', exitCode: 0 });
         } catch (err) {
           return sendJson(res, 200, {
@@ -259,6 +311,7 @@ const server = http.createServer(async (req, res) => {
       } else {
         const localDir = path.join(SANDBOX_BASE_LOCAL, envId);
         try {
+          await mkdir(localDir, { recursive: true });
           const { stdout, stderr } = await execP(buildCmd, { cwd: localDir, timeout: 30000 });
           return sendJson(res, 200, { ok: true, output: stdout || stderr || 'Build OK', exitCode: 0 });
         } catch (err) {
@@ -289,10 +342,10 @@ const server = http.createServer(async (req, res) => {
       if (target === 'dgx_spark') {
         const remoteDir = `${SANDBOX_BASE_REMOTE}/${envId}`;
         try {
-          const { stdout, stderr } = await execP(`ssh flak3dd 'cd "${remoteDir}" && ${cmd}'`, {
-            timeout: 45000,
-            maxBuffer: 5 * 1024 * 1024,
-          });
+          const { stdout, stderr } = await sshRemote(
+            `mkdir -p ${JSON.stringify(remoteDir)} && cd ${JSON.stringify(remoteDir)} && ${cmd}`,
+            45000
+          );
           return sendJson(res, 200, { ok: true, stdout, stderr, exitCode: 0 });
         } catch (err) {
           return sendJson(res, 200, {

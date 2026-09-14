@@ -294,6 +294,10 @@ export function extractFilesFromMarkdown(markdown: string): WorkspaceFile[] {
       const parts = rawHeader.split(/\s+/);
       lang = parts[0]?.trim() || '';
       headerFile = parts[1]?.trim() || '';
+    } else if (/^[a-zA-Z0-9_\-./\\]+\.[a-zA-Z0-9_\-]+$/.test(rawHeader)) {
+      headerFile = rawHeader.replace(/\\/g, '/');
+      const ext = headerFile.split('.').pop() || '';
+      lang = EXTENSION_MAP[ext] ? ext : ext || 'text';
     }
 
     const { filename, cleanContent } = detectFilenameAndContent(code, lang, idx);
