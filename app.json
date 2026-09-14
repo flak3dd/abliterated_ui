@@ -1,25 +1,52 @@
 {
   "expo": {
-    "name": "abliterated_ui",
-    "slug": "abliterated_ui",
-    "version": "1.0.0",
+    "name": "Spark AI",
+    "slug": "spark-mobile-client",
+    "version": "2.0.0",
+    "scheme": "spark",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
-    "userInterfaceStyle": "light",
+    "userInterfaceStyle": "dark",
+    "backgroundColor": "#09090B",
+    "splash": {
+      "image": "./assets/splash-icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#09090B"
+    },
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "bundleIdentifier": "com.sovereign.spark",
+      "infoPlist": {
+        "NSCameraUsageDescription": "Spark AI needs camera access for inpainting and image synthesis.",
+        "NSMicrophoneUsageDescription": "Spark AI needs microphone access for hands-free voice mode."
+      }
     },
     "android": {
       "adaptiveIcon": {
-        "backgroundColor": "#E6F4FE",
         "foregroundImage": "./assets/android-icon-foreground.png",
-        "backgroundImage": "./assets/android-icon-background.png",
-        "monochromeImage": "./assets/android-icon-monochrome.png"
+        "backgroundColor": "#09090B"
       },
-      "predictiveBackGestureEnabled": false
+      "package": "com.sovereign.spark",
+      "permissions": [
+        "CAMERA",
+        "RECORD_AUDIO",
+        "INTERNET",
+        "ACCESS_NETWORK_STATE"
+      ]
     },
     "web": {
+      "bundler": "metro",
+      "output": "single",
       "favicon": "./assets/favicon.png"
-    }
+    },
+    "plugins": [
+      "expo-router",
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Allow Spark AI to select photos for AI inpainting."
+        }
+      ]
+    ]
   }
 }
