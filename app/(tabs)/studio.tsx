@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   StyleSheet,
   Text,
@@ -9,6 +9,7 @@ import {
   ActivityIndicator,
   Platform,
   useWindowDimensions,
+  Image as RNImage,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import * as ImagePicker from 'expo-image-picker';
@@ -47,6 +48,7 @@ import { AspectRatioPicker } from '../../components/studio/AspectRatioPicker';
 import { ModelPicker, SPARK_IMAGE_MODELS } from '../../components/studio/ModelPicker';
 import { BrushSizeSlider } from '../../components/studio/BrushSizeSlider';
 import { Toast } from '../../components/ui/Toast';
+import { dataUrlToRawBase64, extensionForImageUri, uriToDataUrl } from '../../services/kreaService';
 
 function formatElapsed(sec: number): string {
   const m = Math.floor(sec / 60);
@@ -70,6 +72,7 @@ export default function StudioScreen() {
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
   const [envModalOpen, setEnvModalOpen] = useState(false);
   const [toastMsg, setToastMsg] = useState<string | null>(null);
+  const [toastType, setToastType] = useState<'success' | 'info' | 'warning'>('info');
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [showNegative, setShowNegative] = useState(false);
   const [isCanvasExpanded, setIsCanvasExpanded] = useState(false);
@@ -108,6 +111,7 @@ export default function StudioScreen() {
     toggleMaskEnabled,
     setSourceImageUri,
     setMaskPaths,
+    setCanvasSize,
     clearMask,
     generateImage,
     enhancePrompt,
@@ -115,6 +119,31 @@ export default function StudioScreen() {
     selectFromHistory,
     clearHistory,
   } = useStudioStore();
+
+  const showToast = useCallback((msg: string, type: 'success' | 'info' | 'warning' = 'info') => {
+    setToastType(type);
+    setToastMsg(msg);
+  }, []);
+
+  const handleGenerate = useCallback(async () => {
+    try {
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    } catch (e) {}
+    const result = await generateImage();
+    if (!result) {
+      const status = useStudioStore.getState().generationStatusText;
+      showToast(
+        status && status !== 'Ready' ? status : 'Enter a vision prompt first',
+        'warning'
+      );
+      return;
+    }
+    if (result.isFallback) {
+      showToast(result.error || 'Spark image bridge failed', 'warning');
+    } else {
+      showToast('Synthesis complete', 'success');
+    }
+  }, [generateImage, showToast]);
 
   // Desktop keyboard shortcuts: ⌘+Enter to generate, Esc to exit expanded stage
   useEffect(() => {
@@ -129,13 +158,13 @@ export default function StudioScreen() {
           setIsCanvasExpanded(false);
           setIsSidebarOpen(true);
           setIsInspectorCollapsed(false);
-          setToastMsg('Standard Stage active');
+          showToast('Standard Stage active');
         }
       };
       window.addEventListener('keydown', handleKeyDown);
       return () => window.removeEventListener('keydown', handleKeyDown);
     }
-  }, [prompt, isGenerating, selectedModel, aspectRatio, steps, guidanceScale, isCanvasExpanded]);
+  }, [prompt, isGenerating, isCanvasExpanded, handleGenerate, showToast]);
 
   const handlePickImage = async () => {
     try {
@@ -148,7 +177,7 @@ export default function StudioScreen() {
 
       if (!result.canceled && result.assets[0]?.uri) {
         setSourceImageUri(result.assets[0].uri);
-        setToastMsg('Photo loaded for inpainting');
+        showToast('Photo loaded — draw a mask to inpaint');
       }
     } catch (e) {
       console.warn('Image picker error:', e);
@@ -160,7 +189,7 @@ export default function StudioScreen() {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
       const permission = await ImagePicker.requestCameraPermissionsAsync();
       if (!permission.granted) {
-        setToastMsg('Camera permission required');
+        showToast('Camera permission required', 'warning');
         return;
       }
 
@@ -171,61 +200,96 @@ export default function StudioScreen() {
 
       if (!result.canceled && result.assets[0]?.uri) {
         setSourceImageUri(result.assets[0].uri);
-        setToastMsg('Camera capture ready for inpainting');
+        showToast('Camera capture ready — draw a mask to inpaint');
       }
     } catch (e) {
       console.warn('Camera launch error:', e);
     }
   };
 
-  const handleGenerate = async () => {
-    try {
-      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-    } catch (e) {}
-    await generateImage();
-    setToastMsg('Krea 2 RAW synthesis complete');
-  };
-
-  const handleEnhance = () => {
+  const handleEnhance = async () => {
     try {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     } catch (e) {}
-    enhancePrompt();
-    setToastMsg('Prompt enriched with studio optics tokens');
+    const mode = await enhancePrompt();
+    if (mode === 'llm') {
+      showToast('Prompt rewritten by Spark', 'success');
+    } else if (mode === 'local') {
+      showToast('Prompt enriched with studio optics tokens');
+    } else {
+      showToast('Prompt already fully enhanced');
+    }
   };
 
   const handleDownload = async () => {
     const uri = currentGeneratedImage?.uri || sourceImageUri;
     if (!uri) return;
+    if (currentGeneratedImage?.isFallback) {
+      showToast('Nothing to save — generation failed', 'warning');
+      return;
+    }
     try {
+      const ext = extensionForImageUri(uri);
       if (Platform.OS === 'web') {
+        const dataUrl = uri.startsWith('data:') ? uri : await uriToDataUrl(uri);
+        const res = await fetch(dataUrl);
+        const blob = await res.blob();
+        const objectUrl = URL.createObjectURL(blob);
         const a = document.createElement('a');
-        a.href = uri;
-        a.download = `krea2-studio-${selectedModel}-${aspectRatio.replace(':', 'x')}-${Date.now()}.png`;
+        a.href = objectUrl;
+        a.download = `krea2-studio-${selectedModel}-${aspectRatio.replace(':', 'x')}-${Date.now()}.${ext}`;
         document.body.appendChild(a);
         a.click();
         document.body.removeChild(a);
-        setToastMsg('RAW image downloaded');
+        URL.revokeObjectURL(objectUrl);
+        showToast('Image downloaded', 'success');
       } else if (await Sharing.isAvailableAsync()) {
         await Sharing.shareAsync(uri);
       }
     } catch (e) {
       console.warn('Download error:', e);
+      showToast('Download failed', 'warning');
     }
   };
 
   const handleCopyImage = async () => {
     const uri = currentGeneratedImage?.uri || sourceImageUri;
     if (!uri) return;
+    if (currentGeneratedImage?.isFallback) {
+      showToast('Nothing to copy — generation failed', 'warning');
+      return;
+    }
     try {
-      if (Platform.OS === 'web' && navigator?.clipboard) {
-        await navigator.clipboard.writeText(uri);
-        setToastMsg('Image URI copied to clipboard');
-      } else {
-        setToastMsg('Image ready');
+      const dataUrl = uri.startsWith('data:') ? uri : await uriToDataUrl(uri);
+      if (Platform.OS === 'web' && typeof navigator !== 'undefined' && navigator.clipboard?.write) {
+        const res = await fetch(dataUrl);
+        const blob = await res.blob();
+        const type = blob.type && blob.type !== 'application/octet-stream' ? blob.type : 'image/png';
+        const ClipboardItemCtor = (globalThis as any).ClipboardItem;
+        if (!ClipboardItemCtor) {
+          throw new Error('ClipboardItem unavailable');
+        }
+        await navigator.clipboard.write([new ClipboardItemCtor({ [type]: blob })]);
+        showToast('Image copied to clipboard', 'success');
+        return;
       }
+      const parsed = dataUrlToRawBase64(dataUrl);
+      if (parsed) {
+        try {
+          const pkg = 'expo-clipboard';
+          // eslint-disable-next-line @typescript-eslint/no-var-requires
+          const ExpoClipboard = require(pkg);
+          if (ExpoClipboard?.setImageAsync) {
+            await ExpoClipboard.setImageAsync(parsed.base64);
+            showToast('Image copied to clipboard', 'success');
+            return;
+          }
+        } catch {}
+      }
+      showToast('Could not copy image bytes', 'warning');
     } catch (e) {
-      setToastMsg('Could not copy image');
+      console.warn('Copy image error:', e);
+      showToast('Could not copy image', 'warning');
     }
   };
 
@@ -235,9 +299,9 @@ export default function StudioScreen() {
     } catch (e) {}
     const success = exportToSandbox();
     if (success) {
-      setToastMsg('Synced to Chat Sandbox (assets/)');
+      showToast('Synced to Chat Sandbox (assets/)', 'success');
     } else {
-      setToastMsg('Failed to sync to sandbox');
+      showToast('Failed to sync to sandbox', 'warning');
     }
   };
 
@@ -246,7 +310,7 @@ export default function StudioScreen() {
     if (uri) {
       setSourceImageUri(uri);
       toggleMaskEnabled(true);
-      setToastMsg('Output set as inpainting source');
+      showToast('Output set as inpainting source');
     }
   };
 
@@ -256,7 +320,7 @@ export default function StudioScreen() {
     } catch (e) {}
     const newSeed = Math.floor(Math.random() * 99999999);
     setSeed(newSeed);
-    setToastMsg(`Seed randomized: ${newSeed}`);
+    showToast('Seed randomized: ' + newSeed);
   };
 
   const currentModelObj = SPARK_IMAGE_MODELS.find((m) => m.id === selectedModel);
@@ -267,11 +331,11 @@ export default function StudioScreen() {
     if (nextExpanded) {
       setIsSidebarOpen(false);
       setIsInspectorCollapsed(true);
-      setToastMsg('Theater Stage expanded (Press ESC to restore)');
+      showToast('Theater Stage expanded (Press ESC to restore)');
     } else {
       setIsSidebarOpen(true);
       setIsInspectorCollapsed(false);
-      setToastMsg('Standard Stage active');
+      showToast('Standard Stage active');
     }
   };
 
@@ -672,9 +736,11 @@ export default function StudioScreen() {
                   aspectRatio={aspectRatio}
                   onMaskChange={setMaskPaths}
                   onClearMask={clearMask}
+                  onCanvasLayout={setCanvasSize}
+                  isFallback={Boolean(currentGeneratedImage?.isFallback)}
                   onImageDrop={(dataUrl) => {
                     setSourceImageUri(dataUrl);
-                    setToastMsg('Image loaded onto canvas');
+                    showToast('Image loaded onto canvas');
                   }}
                   onDownloadImage={handleDownload}
                   onCopyImage={handleCopyImage}
@@ -729,16 +795,23 @@ export default function StudioScreen() {
                       history.map((item) => (
                         <TouchableOpacity
                           key={item.id}
-                          style={styles.historyCard}
+                          style={[styles.historyCard, item.isFallback && styles.historyCardFailed]}
                           onPress={() => selectFromHistory(item)}
                           activeOpacity={0.75}
                         >
+                          <RNImage
+                            source={{ uri: item.uri }}
+                            style={styles.historyCardImage}
+                            resizeMode="cover"
+                          />
                           <View style={styles.historyCardMeta}>
                             <Text style={styles.historyAspectRatioBadge}>{item.aspectRatio}</Text>
-                            <Text style={styles.historyModelTag}>{item.model.split('-')[0]}</Text>
+                            <Text style={styles.historyModelTag}>
+                              {item.isFallback ? 'FAILED' : item.model.split('-')[0]}
+                            </Text>
                           </View>
                           <Text style={styles.historyCardPrompt} numberOfLines={3}>
-                            {item.prompt}
+                            {item.isFallback ? item.error || item.prompt : item.prompt}
                           </Text>
                         </TouchableOpacity>
                       ))
@@ -877,9 +950,11 @@ export default function StudioScreen() {
                   aspectRatio={aspectRatio}
                   onMaskChange={setMaskPaths}
                   onClearMask={clearMask}
+                  onCanvasLayout={setCanvasSize}
+                  isFallback={Boolean(currentGeneratedImage?.isFallback)}
                   onImageDrop={(dataUrl) => {
                     setSourceImageUri(dataUrl);
-                    setToastMsg('Image loaded onto canvas');
+                    showToast('Image loaded onto canvas');
                   }}
                   onDownloadImage={handleDownload}
                   onCopyImage={handleCopyImage}
@@ -947,13 +1022,20 @@ export default function StudioScreen() {
                       {history.map((item) => (
                         <TouchableOpacity
                           key={item.id}
-                          style={styles.historyThumb}
+                          style={[styles.historyThumb, item.isFallback && styles.historyCardFailed]}
                           onPress={() => selectFromHistory(item)}
                           activeOpacity={0.7}
                         >
-                          <Text style={styles.historyModelTag}>{item.aspectRatio}</Text>
+                          <RNImage
+                            source={{ uri: item.uri }}
+                            style={styles.historyMobileThumbImage}
+                            resizeMode="cover"
+                          />
+                          <Text style={styles.historyModelTag}>
+                            {item.isFallback ? 'FAILED' : item.aspectRatio}
+                          </Text>
                           <Text style={styles.historyPrompt} numberOfLines={2}>
-                            {item.prompt}
+                            {item.isFallback ? item.error || item.prompt : item.prompt}
                           </Text>
                         </TouchableOpacity>
                       ))}
@@ -970,6 +1052,7 @@ export default function StudioScreen() {
       <Toast
         message={toastMsg}
         visible={Boolean(toastMsg)}
+        type={toastType}
         onDismiss={() => setToastMsg(null)}
       />
 
@@ -1021,7 +1104,7 @@ const styles = StyleSheet.create({
     width: 6,
     height: 6,
     borderRadius: 3,
-    backgroundColor: '#10B981',
+    backgroundColor: '#3B82F6',
   },
   subBarTitle: {
     fontSize: 10.5,
@@ -1072,9 +1155,9 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
     paddingVertical: 4,
     borderRadius: 8,
-    backgroundColor: 'rgba(16, 185, 129, 0.1)',
+    backgroundColor: 'rgba(59, 130, 246, 0.1)',
     borderWidth: 1,
-    borderColor: 'rgba(16, 185, 129, 0.3)',
+    borderColor: 'rgba(59, 130, 246, 0.3)',
   },
   historyToggleBtnActive: {
     backgroundColor: Colors.brand.emerald,
@@ -1138,9 +1221,9 @@ const styles = StyleSheet.create({
     paddingHorizontal: 8,
     paddingVertical: 3,
     borderRadius: 6,
-    backgroundColor: 'rgba(16, 185, 129, 0.12)',
+    backgroundColor: 'rgba(59, 130, 246, 0.12)',
     borderWidth: 1,
-    borderColor: 'rgba(16, 185, 129, 0.3)',
+    borderColor: 'rgba(59, 130, 246, 0.3)',
   },
   enhanceBtnText: {
     fontSize: 10.5,
@@ -1280,9 +1363,9 @@ const styles = StyleSheet.create({
     paddingHorizontal: 8,
     paddingVertical: 5,
     borderRadius: 6,
-    backgroundColor: 'rgba(16, 185, 129, 0.12)',
+    backgroundColor: 'rgba(59, 130, 246, 0.12)',
     borderWidth: 1,
-    borderColor: 'rgba(16, 185, 129, 0.3)',
+    borderColor: 'rgba(59, 130, 246, 0.3)',
   },
   diceBtnText: {
     fontSize: 11,
@@ -1357,7 +1440,7 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontFamily: 'Menlo',
     fontWeight: '700',
-    color: '#047857',
+    color: '#1D4ED8',
     backgroundColor: 'rgba(0, 0, 0, 0.12)',
     paddingHorizontal: 5,
     paddingVertical: 2,
@@ -1375,7 +1458,7 @@ const styles = StyleSheet.create({
     left: 0,
     top: 0,
     bottom: 0,
-    backgroundColor: '#059669',
+    backgroundColor: '#2563EB',
     opacity: 0.4,
   },
   progressBtnInner: {
@@ -1416,7 +1499,7 @@ const styles = StyleSheet.create({
     borderRadius: 9999,
     backgroundColor: 'rgba(18, 18, 22, 0.92)',
     borderWidth: 1,
-    borderColor: 'rgba(16, 185, 129, 0.4)',
+    borderColor: 'rgba(59, 130, 246, 0.4)',
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.35,
@@ -1495,6 +1578,15 @@ const styles = StyleSheet.create({
     padding: 10,
     gap: 6,
   },
+  historyCardFailed: {
+    borderColor: 'rgba(244, 63, 94, 0.45)',
+  },
+  historyCardImage: {
+    width: '100%',
+    height: 88,
+    borderRadius: 8,
+    backgroundColor: '#09090B',
+  },
   historyCardMeta: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1505,7 +1597,7 @@ const styles = StyleSheet.create({
     fontFamily: 'Menlo',
     fontWeight: '800',
     color: Colors.brand.emerald,
-    backgroundColor: 'rgba(16, 185, 129, 0.1)',
+    backgroundColor: 'rgba(59, 130, 246, 0.1)',
     paddingHorizontal: 5,
     paddingVertical: 2,
     borderRadius: 4,
@@ -1648,7 +1740,7 @@ const styles = StyleSheet.create({
     right: -16,
     top: -13,
     bottom: -13,
-    backgroundColor: '#059669',
+    backgroundColor: '#2563EB',
     opacity: 0.35,
     borderRadius: 14,
   },
@@ -1698,6 +1790,13 @@ const styles = StyleSheet.create({
     borderColor: Colors.border.default,
     borderRadius: 12,
     padding: 10,
+  },
+  historyMobileThumbImage: {
+    width: '100%',
+    height: 72,
+    borderRadius: 8,
+    backgroundColor: '#09090B',
+    marginBottom: 8,
   },
   historyPrompt: {
     fontSize: 11.5,

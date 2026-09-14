@@ -161,9 +161,9 @@ export const ModelStorageSection: React.FC = () => {
         <View style={styles.headerLeft}>
           <Server size={18} color={Colors.brand.emerald} />
           <View>
-            <Text style={styles.headerTitle}>DGX SPARK NVMe MODEL STORAGE</Text>
+            <Text style={styles.headerTitle}>SOVEREIGN CLOUD MODEL STORAGE</Text>
             <Text style={styles.headerSubtitle}>
-              Safetensors weights stored on NVMe PCIe Gen5 under models/
+              Safetensors weights deployed on NVLink inference cluster at api.abliterated.io
             </Text>
           </View>
         </View>
@@ -177,7 +177,7 @@ export const ModelStorageSection: React.FC = () => {
         {/* Multi-segmented Glowing Storage Bar */}
         <View style={styles.storageBarTrack}>
           {/* VRAM Active Weight */} 
-          <View style={[styles.barSegment, { width: '12%', backgroundColor: '#10B981' }]} />
+          <View style={[styles.barSegment, { width: '12%', backgroundColor: Colors.brand.emerald }]} />
           {/* Diffusion Models */} 
           <View style={[styles.barSegment, { width: '18%', backgroundColor: '#0EA5E9' }]} />
           {/* Vision TE & LoRA */} 
@@ -200,7 +200,7 @@ export const ModelStorageSection: React.FC = () => {
           </View>
           <View style={styles.statItem}>
             <Text style={styles.statLabel}>ACTIVE VRAM</Text>
-            <Text style={[styles.statValue, { color: '#10B981' }]}>{vramActiveGb.toFixed(1)} GB</Text>
+            <Text style={[styles.statValue, { color: Colors.brand.emerald }]}>{vramActiveGb.toFixed(1)} GB</Text>
             <Text style={styles.statSub}>Unified HBM</Text>
           </View>
           <View style={styles.statItem}>
@@ -295,13 +295,13 @@ export const ModelStorageSection: React.FC = () => {
                   <View
                     style={[
                       styles.statusDot,
-                      { backgroundColor: isLoaded ? '#10B981' : '#0EA5E9' },
+                      { backgroundColor: isLoaded ? Colors.brand.emerald : '#0EA5E9' },
                     ]}
                   />
                   <Text
                     style={[
                       styles.statusLabel,
-                      { color: isLoaded ? '#10B981' : '#0EA5E9' },
+                      { color: isLoaded ? Colors.brand.emerald : '#0EA5E9' },
                     ]}
                   >
                     {isLoaded ? 'ACTIVE IN UNIFIED VRAM' : 'WARM NVMe CACHE'}
@@ -323,8 +323,8 @@ export const ModelStorageSection: React.FC = () => {
                   <View style={styles.detailRow}>
                     <Text style={styles.detailLabel}>Safetensors Integrity:</Text>
                     <View style={styles.integrityRow}>
-                      <CheckCircle2 size={13} color="#10B981" />
-                      <Text style={[styles.detailValue, { color: '#10B981' }]}>
+                      <CheckCircle2 size={13} color={Colors.brand.emerald} />
+                      <Text style={[styles.detailValue, { color: Colors.brand.emerald }]}>
                         {model.verifiedSha}
                       </Text>
                     </View>
@@ -375,9 +375,9 @@ const styles = StyleSheet.create({
     marginTop: 2,
   },
   nvmePill: {
-    backgroundColor: 'rgba(16, 185, 129, 0.15)',
+    backgroundColor: 'rgba(59, 130, 246, 0.15)',
     borderWidth: 1,
-    borderColor: 'rgba(16, 185, 129, 0.3)',
+    borderColor: 'rgba(59, 130, 246, 0.3)',
     paddingHorizontal: 8,
     paddingVertical: 4,
     borderRadius: 6,
@@ -385,7 +385,7 @@ const styles = StyleSheet.create({
   nvmePillText: {
     fontSize: 10.5,
     fontWeight: '800',
-    color: '#10B981',
+    color: '#3B82F6',
   },
   storageCard: {
     backgroundColor: Colors.background.surface,
@@ -445,8 +445,8 @@ const styles = StyleSheet.create({
     borderRadius: 8,
   },
   filterChipActive: {
-    backgroundColor: 'rgba(16, 185, 129, 0.15)',
-    borderColor: '#10B981',
+    backgroundColor: 'rgba(59, 130, 246, 0.15)',
+    borderColor: '#3B82F6',
   },
   filterChipText: {
     fontSize: 11,
@@ -454,7 +454,7 @@ const styles = StyleSheet.create({
     color: Colors.text.secondary,
   },
   filterChipTextActive: {
-    color: '#10B981',
+    color: '#3B82F6',
     fontWeight: '700',
   },
   modelList: {
@@ -468,8 +468,8 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
   },
   modelCardLoaded: {
-    borderColor: 'rgba(16, 185, 129, 0.4)',
-    backgroundColor: 'rgba(16, 185, 129, 0.03)',
+    borderColor: 'rgba(59, 130, 246, 0.4)',
+    backgroundColor: 'rgba(59, 130, 246, 0.03)',
   },
   cardHeader: {
     flexDirection: 'row',
@@ -504,7 +504,7 @@ const styles = StyleSheet.create({
     borderRadius: 4,
   },
   formatNvfp4: {
-    backgroundColor: 'rgba(16, 185, 129, 0.15)',
+    backgroundColor: 'rgba(59, 130, 246, 0.15)',
   },
   formatFp8: {
     backgroundColor: 'rgba(14, 165, 233, 0.15)',

@@ -560,8 +560,8 @@ const styles = StyleSheet.create({
     borderColor: 'transparent',
   },
   tabBtnActive: {
-    backgroundColor: 'rgba(16, 185, 129, 0.08)',
-    borderColor: 'rgba(16, 185, 129, 0.3)',
+    backgroundColor: 'rgba(59, 130, 246, 0.08)',
+    borderColor: 'rgba(59, 130, 246, 0.3)',
   },
   tabBtnText: {
     fontSize: 11,
@@ -590,7 +590,7 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     marginTop: 6,
     borderWidth: 1,
-    borderColor: 'rgba(16, 185, 129, 0.2)',
+    borderColor: 'rgba(59, 130, 246, 0.2)',
   },
   calloutText: {
     flex: 1,
@@ -771,8 +771,8 @@ const styles = StyleSheet.create({
     borderColor: Colors.border.default,
   },
   targetChoiceActive: {
-    borderColor: 'rgba(16, 185, 129, 0.3)',
-    backgroundColor: 'rgba(16, 185, 129, 0.05)',
+    borderColor: 'rgba(59, 130, 246, 0.3)',
+    backgroundColor: 'rgba(59, 130, 246, 0.05)',
   },
   targetChoiceTitle: {
     fontSize: 11.5,

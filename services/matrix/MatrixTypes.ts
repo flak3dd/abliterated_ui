@@ -9,7 +9,7 @@ export type MatrixPhase =
   | 'PHASE_6_SKULL'
   | 'PHASE_7_AMBIENT';
 
-export type MatrixSpectrum = 'green' | 'blue' | 'amber' | 'rose' | 'violet';
+export type MatrixSpectrum = 'green' | 'blue' | 'amber' | 'rose' | 'violet' | 'rainbow';
 
 export type GlyphSetType = 'katakana' | 'hex' | 'binary' | 'ascii' | 'mixed' | 'telemetry' | 'abliterad';
 
@@ -144,6 +144,22 @@ export const MATRIX_PALETTES: Record<MatrixSpectrum, MatrixColorPalette> = {
     skull4: '#E9D5FF',
     glow: 'rgba(168, 85, 247, 0.45)',
     bg: '#07020B',
+  },
+  rainbow: {
+    name: 'rainbow',
+    label: 'Prism',
+    head: '#FFFFFF',
+    t1: '#FF4D8D',
+    t2: '#FFD166',
+    t3: '#06D6A0',
+    t4: '#118AB2',
+    fade: 'rgba(6, 4, 10, 0.14)',
+    skull1: '#118AB2',
+    skull2: '#06D6A0',
+    skull3: '#FFD166',
+    skull4: '#FF4D8D',
+    glow: 'rgba(255, 120, 200, 0.45)',
+    bg: '#06040A',
   },
 };
 

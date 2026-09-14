@@ -73,8 +73,8 @@ export default function TelemetryScreen() {
     <SafeAreaView style={styles.container} edges={['top']}>
       <HeaderBar
         onOpenDrawer={() => setDrawerOpen(true)}
-        title="Hardware Radar"
-        subtitle="GB10 Blackwell"
+        title="Cloud Telemetry"
+        subtitle="H100 SXM5"
       />
 
       <ScrollView
@@ -95,7 +95,7 @@ export default function TelemetryScreen() {
             <View>
               <Text style={styles.bannerTitle}>{telemetry.gpuModel}</Text>
               <Text style={styles.bannerSub}>
-                NVLink 5 Fabric • 1.2 TB/s Unified HBM Bandwidth
+                High-Throughput NVLink Fabric • FP8 / NVFP4 Tensor Core Accelerators
               </Text>
             </View>
           </View>

@@ -168,7 +168,7 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(10, 10, 14, 0.95)',
   },
   cardSuccess: {
-    borderColor: 'rgba(16, 185, 129, 0.3)',
+    borderColor: 'rgba(59, 130, 246, 0.3)',
   },
   cardFailed: {
     borderColor: 'rgba(244, 63, 94, 0.3)',
@@ -196,7 +196,7 @@ const styles = StyleSheet.create({
     borderRadius: 4,
   },
   badgeSuccess: {
-    backgroundColor: 'rgba(16, 185, 129, 0.15)',
+    backgroundColor: 'rgba(59, 130, 246, 0.15)',
   },
   badgeFailed: {
     backgroundColor: 'rgba(244, 63, 94, 0.15)',

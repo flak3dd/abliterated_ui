@@ -7,7 +7,7 @@ import { evaluateFactualGrounding } from './hallucinationDetector';
  * Intelligent task decomposition prompt
  */
 function buildOrchestratorPrompt(masterPrompt: string, existingFileNames: string[]): string {
-  return `You are the Lead Swarm Architect on NVIDIA DGX Spark GB10.
+  return `You are the Lead Swarm Architect on Abliterated Sovereign Cloud.
 Your task is to decompose a complex software engineering request into 2 to 4 discrete, modular subtasks that specialized worker agents will execute concurrently.
 
 CRITICAL DECOMPOSITION RULES:

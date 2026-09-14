@@ -5,6 +5,7 @@ import * as Haptics from 'expo-haptics';
 import Colors from '../../theme/colors';
 import { PingIndicator } from '../telemetry/PingIndicator';
 import { useChatStore } from '../../stores/useChatStore';
+import { useMeshStore } from '../../stores/useMeshStore';
 
 interface HeaderBarProps {
   onOpenDrawer?: () => void;
@@ -28,12 +29,17 @@ export const HeaderBar: React.FC<HeaderBarProps> = ({
   isSandboxPanelOpen = false,
   isSidebarOpen = true,
   isDesktop = false,
-  title = 'Spark AI',
-  subtitle = 'GB10',
-  modelTag = 'qwen-abliterated (NVFP4)',
-  modelSub = '65k Context',
+  title = 'Abliterated AI',
+  subtitle,
+  modelTag,
+  modelSub = 'Sovereign Cloud',
 }) => {
   const { antiHallucination, toggleAntiHallucination } = useChatStore();
+  const { activeHost } = useMeshStore();
+
+  const isFeatherless = activeHost.includes('featherless');
+  const effectiveSubtitle = subtitle || (isFeatherless ? 'Featherless' : 'Cloud');
+  const effectiveModelTag = modelTag || (isFeatherless ? 'Llama-3.1-8B (Mesh)' : 'qwen-abliterated (NVFP4)');
 
   const handleMenuPress = () => {
     try {
@@ -87,7 +93,7 @@ export const HeaderBar: React.FC<HeaderBarProps> = ({
             activeOpacity={0.7}
           >
             <Zap size={9} color={Colors.brand.emerald} />
-            <Text style={styles.badgeText}>{subtitle}</Text>
+            <Text style={styles.badgeText}>{effectiveSubtitle}</Text>
           </TouchableOpacity>
         </View>
       </View>
@@ -97,7 +103,7 @@ export const HeaderBar: React.FC<HeaderBarProps> = ({
         <View style={styles.centerPillGroup}>
           <View style={styles.modelPill}>
             <Cpu size={11} color={Colors.brand.emerald} />
-            <Text style={styles.modelPillText}>{modelTag}</Text>
+            <Text style={styles.modelPillText}>{effectiveModelTag}</Text>
             <Text style={styles.modelPillDivider}>•</Text>
             <Text style={styles.modelPillSub}>{modelSub}</Text>
           </View>
@@ -154,7 +160,7 @@ export const HeaderBar: React.FC<HeaderBarProps> = ({
             activeOpacity={0.7}
           >
             <Terminal size={11} color={Colors.brand.sky} />
-            <Text style={styles.matrixBtnText}>Matrix</Text>
+            <Text style={styles.matrixBtnText}>BLINGbling</Text>
           </TouchableOpacity>
         )}
 
@@ -191,8 +197,8 @@ const styles = StyleSheet.create({
     borderColor: 'rgba(255, 255, 255, 0.06)',
   },
   iconButtonActive: {
-    backgroundColor: 'rgba(16, 185, 129, 0.1)',
-    borderColor: 'rgba(16, 185, 129, 0.3)',
+    backgroundColor: 'rgba(59, 130, 246, 0.1)',
+    borderColor: 'rgba(59, 130, 246, 0.3)',
   },
   centerContainer: {
     flexDirection: 'row',
@@ -214,7 +220,7 @@ const styles = StyleSheet.create({
     paddingVertical: 1.5,
     borderRadius: 9999,
     borderWidth: 1,
-    borderColor: 'rgba(16, 185, 129, 0.2)',
+    borderColor: 'rgba(59, 130, 246, 0.2)',
   },
   badgeText: {
     fontSize: 10,
@@ -265,8 +271,8 @@ const styles = StyleSheet.create({
     borderColor: 'rgba(255, 255, 255, 0.06)',
   },
   antiHallucinationHeaderPillActive: {
-    backgroundColor: 'rgba(16, 185, 129, 0.1)',
-    borderColor: 'rgba(16, 185, 129, 0.3)',
+    backgroundColor: 'rgba(59, 130, 246, 0.1)',
+    borderColor: 'rgba(59, 130, 246, 0.3)',
   },
   antiHallucinationHeaderText: {
     fontSize: 10.5,
@@ -290,9 +296,9 @@ const styles = StyleSheet.create({
     paddingHorizontal: 8,
     paddingVertical: 4,
     borderRadius: 6,
-    backgroundColor: 'rgba(16, 185, 129, 0.1)',
+    backgroundColor: 'rgba(59, 130, 246, 0.1)',
     borderWidth: 1,
-    borderColor: 'rgba(16, 185, 129, 0.3)',
+    borderColor: 'rgba(59, 130, 246, 0.3)',
   },
   sandboxToggleBtnActive: {
     backgroundColor: Colors.brand.emerald,

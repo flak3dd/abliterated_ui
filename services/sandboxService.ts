@@ -9,6 +9,11 @@ import {
   WorkspaceFile,
 } from '../types';
 import { useMeshStore } from '../stores/useMeshStore';
+import {
+  consumeSandboxWork,
+  hasSandboxWork,
+  restoreSandboxWork,
+} from './sandboxDirty';
 
 const PRIMARY_SANDBOX_PORT = 17330;
 
@@ -260,22 +265,35 @@ export async function materializeSandbox(
   env: SessionEnvironment,
   target: ExecutionTarget = 'local_mac'
 ): Promise<SandboxInfo> {
-  const filesPayload: Record<string, { path: string; content: string }> = {};
+  const meta = detectRuntimeAndFramework(env.files);
+  const info = (filesCount: number, path?: string): SandboxInfo => ({
+    envId: env.id,
+    path: path || `/tmp/spark-sandboxes/${env.id}`,
+    runtime: meta.runtime,
+    target,
+    filesCount,
+  });
 
-  for (const [path, file] of Object.entries(env.files)) {
-    filesPayload[path] = {
-      path: file.path,
-      content: file.content,
-    };
+  if (!hasSandboxWork(env.id)) {
+    return info(Object.keys(env.files).length);
   }
 
-  const meta = detectRuntimeAndFramework(env.files);
+  const work = consumeSandboxWork(env.id);
+  const filesPayload: Record<string, { path: string; content: string }> = {};
+  const paths = work.replaceAll ? Object.keys(env.files) : work.paths;
+  for (const p of paths) {
+    const file = env.files[p];
+    if (!file) continue;
+    filesPayload[p] = { path: file.path, content: file.content };
+  }
 
   const res = await postSandbox(
     '/api/sandbox/materialize',
     {
       envId: env.id,
       files: filesPayload,
+      deleted: work.replaceAll ? [] : work.deleted,
+      replaceAll: work.replaceAll,
       target,
       runtime: meta.runtime,
     },
@@ -284,22 +302,11 @@ export async function materializeSandbox(
 
   if (res?.ok) {
     const data = await res.json();
-    return {
-      envId: env.id,
-      path: data.path || `/tmp/spark-sandboxes/${env.id}`,
-      runtime: meta.runtime,
-      target,
-      filesCount: Object.keys(filesPayload).length,
-    };
+    return info(Object.keys(env.files).length, data.path);
   }
 
-  return {
-    envId: env.id,
-    path: `/tmp/spark-sandboxes/${env.id}`,
-    runtime: meta.runtime,
-    target,
-    filesCount: Object.keys(filesPayload).length,
-  };
+  restoreSandboxWork(env.id, work);
+  return info(Object.keys(env.files).length);
 }
 
 /**

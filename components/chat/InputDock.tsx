@@ -236,7 +236,7 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(18, 18, 22, 0.85)',
     borderRadius: 24,
     borderWidth: 1,
-    borderColor: 'rgba(16, 185, 129, 0.25)',
+    borderColor: 'rgba(59, 130, 246, 0.25)',
     paddingHorizontal: 10,
     paddingVertical: 6,
     width: '100%',
@@ -258,7 +258,7 @@ const styles = StyleSheet.create({
   },
   textInput: {
     flex: 1,
-    color: '#ECFDF5',
+    color: '#EFF6FF',
     fontSize: 14,
     lineHeight: 20,
     paddingHorizontal: 12,
@@ -327,8 +327,8 @@ const styles = StyleSheet.create({
     paddingVertical: 3,
   },
   swarmPillActive: {
-    backgroundColor: 'rgba(16, 185, 129, 0.16)',
-    borderColor: 'rgba(16, 185, 129, 0.4)',
+    backgroundColor: 'rgba(59, 130, 246, 0.16)',
+    borderColor: 'rgba(59, 130, 246, 0.4)',
   },
   swarmPillText: {
     fontSize: 9.5,
@@ -352,8 +352,8 @@ const styles = StyleSheet.create({
     paddingVertical: 3,
   },
   antiHallucinationPillActive: {
-    backgroundColor: 'rgba(16, 185, 129, 0.12)',
-    borderColor: 'rgba(16, 185, 129, 0.3)',
+    backgroundColor: 'rgba(59, 130, 246, 0.12)',
+    borderColor: 'rgba(59, 130, 246, 0.3)',
   },
   antiHallucinationPillText: {
     fontSize: 9.5,

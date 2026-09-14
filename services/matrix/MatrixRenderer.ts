@@ -73,7 +73,7 @@ export class MatrixRenderer {
     this.ctx = context;
 
     this.config = {
-      spectrum: 'green',
+      spectrum: 'rainbow',
       speedMultiplier: 0.02,
       glyphSet: 'abliterad',
       audioEnabled: false,
@@ -85,7 +85,7 @@ export class MatrixRenderer {
       ...initialConfig,
     };
 
-    this.palette = MATRIX_PALETTES[this.config.spectrum] || MATRIX_PALETTES.green;
+    this.palette = MATRIX_PALETTES[this.config.spectrum] || MATRIX_PALETTES.rainbow;
     this.resize(canvas.width, canvas.height);
   }
 
@@ -298,13 +298,13 @@ export class MatrixRenderer {
 
   public setSpectrum(spectrum: MatrixSpectrum) {
     this.config.spectrum = spectrum;
-    this.palette = MATRIX_PALETTES[spectrum] || MATRIX_PALETTES.green;
+    this.palette = MATRIX_PALETTES[spectrum] || MATRIX_PALETTES.rainbow;
   }
 
   public setConfig(update: Partial<MatrixEngineConfig>) {
     this.config = { ...this.config, ...update };
     if (update.spectrum) {
-      this.palette = MATRIX_PALETTES[update.spectrum] || MATRIX_PALETTES.green;
+      this.palette = MATRIX_PALETTES[update.spectrum] || MATRIX_PALETTES.rainbow;
     }
     if (update.audioEnabled !== undefined) {
       matrixAudio.setMuted(!update.audioEnabled);
@@ -551,8 +551,26 @@ export class MatrixRenderer {
         let color = palette.t3;
         let alpha = 0.22 + 0.78 * Math.pow(1 - tNorm, 0.65);
         let glow = false;
+        let glowColor = palette.glow;
 
-        if (t === 0) {
+        if (this.config.spectrum === 'rainbow') {
+          const hue = (col.col * 7 + Date.now() / 40 + r * 2) % 360;
+          const light = t === 0 ? 92 : Math.max(28, 74 - tNorm * 52);
+          color = `hsl(${hue}, ${t === 0 ? 55 : 100}%, ${light}%)`;
+          glowColor = `hsla(${hue}, 100%, 60%, 0.5)`;
+          if (t === 0) {
+            alpha = col.plane === 3 ? 0.85 : 1;
+            glow = col.plane === 1;
+          } else if (tNorm < 0.18) {
+            alpha = col.plane === 1 ? 0.95 : col.plane === 2 ? 0.82 : 0.6;
+          } else if (tNorm < 0.45) {
+            alpha *= col.plane === 1 ? 0.88 : col.plane === 2 ? 0.7 : 0.48;
+          } else if (tNorm < 0.75) {
+            alpha *= col.plane === 3 ? 0.4 : 0.55;
+          } else {
+            alpha *= 0.35;
+          }
+        } else if (t === 0) {
           color = flash ? palette.head : palette.head;
           alpha = col.plane === 3 ? 0.85 : 1;
           glow = col.plane === 1;
@@ -585,13 +603,13 @@ export class MatrixRenderer {
         ctx.fillStyle = color;
 
         if (glow && config.bloomGlow) {
-          ctx.shadowColor = palette.glow;
+          ctx.shadowColor = glowColor;
           ctx.shadowBlur = bloom;
           ctx.fillText(ch, px, py);
           ctx.shadowBlur = 0;
           ctx.shadowColor = 'transparent';
           ctx.globalAlpha = 1;
-          ctx.fillStyle = palette.head;
+          ctx.fillStyle = this.config.spectrum === 'rainbow' ? color : palette.head;
           ctx.fillText(ch, px, py);
         } else {
           ctx.fillText(ch, px, py);
@@ -668,10 +686,14 @@ export class MatrixRenderer {
         ctx.fillText(ch, x - 2, y);
       }
 
-      ctx.shadowColor = palette.glow;
+      ctx.shadowColor = this.config.spectrum === 'rainbow'
+        ? `hsla(${(i * 32 + now / 30) % 360}, 100%, 60%, 0.55)`
+        : palette.glow;
       ctx.shadowBlur = locked ? 14 : 6;
       ctx.globalAlpha = locked ? (glitching ? 0.85 : 1) : 0.4 + 0.6 * lock;
-      ctx.fillStyle = glitching ? palette.t1 : palette.head;
+      ctx.fillStyle = this.config.spectrum === 'rainbow' && !glitching
+        ? `hsl(${(i * 32 + now / 30) % 360}, 90%, 72%)`
+        : glitching ? palette.t1 : palette.head;
       ctx.fillText(ch, x, y);
     }
 

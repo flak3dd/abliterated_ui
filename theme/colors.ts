@@ -8,12 +8,15 @@ export const Colors = {
   border: {
     default: 'rgba(255, 255, 255, 0.08)',
     active: 'rgba(255, 255, 255, 0.16)',
-    focus: 'rgba(16, 185, 129, 0.45)',
+    focus: 'rgba(59, 130, 246, 0.45)',
   },
   brand: {
-    emerald: '#10B981',          // Primary action & active status
-    emeraldDim: 'rgba(16, 185, 129, 0.12)',
-    emeraldGlow: 'rgba(16, 185, 129, 0.25)',
+    emerald: '#3B82F6',          // Primary action & active status (Electric Blue)
+    emeraldDim: 'rgba(59, 130, 246, 0.14)',
+    emeraldGlow: 'rgba(59, 130, 246, 0.30)',
+    blue: '#3B82F6',
+    blueDim: 'rgba(59, 130, 246, 0.14)',
+    blueGlow: 'rgba(59, 130, 246, 0.30)',
     sky: '#38BDF8',              // Reasoning trace & thinking state
     skyDim: 'rgba(56, 189, 248, 0.12)',
     amber: '#F59E0B',            // Tailscale mesh fallback & warnings

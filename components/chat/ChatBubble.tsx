@@ -12,6 +12,8 @@ import { TestResultCard } from './TestResultCard';
 import { SwarmInspectorCard } from './SwarmInspectorCard';
 import { useSandboxStore } from '../../stores/useSandboxStore';
 import { useChatStore } from '../../stores/useChatStore';
+import { useMeshStore } from '../../stores/useMeshStore';
+import { resolveWsUrl } from '../../services/apiConfig';
 
 /**
  * Cross-platform clipboard write helper with safe fallbacks.
@@ -136,10 +138,8 @@ export const ChatBubbleBase: React.FC<ChatBubbleProps> = ({
 
       if (showStream) {
         try {
-          const isWeb = Platform.OS === 'web' && typeof window !== 'undefined';
-          const protocol = isWeb && window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-          const host = isWeb ? window.location.hostname : '127.0.0.1';
-          const wsUrl = `${protocol}//${host}:7860/v1/images/stream`;
+          const meshHost = useMeshStore.getState().activeHost || '127.0.0.1';
+          const wsUrl = resolveWsUrl(meshHost, 7860, '/v1/images/stream');
 
           const ws = new WebSocket(wsUrl);
           wsRef.current = ws;
@@ -580,9 +580,9 @@ const styles = StyleSheet.create({
   },
   userBubble: {
     maxWidth: '85%',
-    backgroundColor: 'rgba(16, 185, 129, 0.15)',
+    backgroundColor: 'rgba(59, 130, 246, 0.15)',
     borderWidth: 1,
-    borderColor: 'rgba(16, 185, 129, 0.4)',
+    borderColor: 'rgba(59, 130, 246, 0.4)',
     borderRadius: 18,
     borderBottomRightRadius: 4,
     paddingHorizontal: 14,
@@ -594,7 +594,7 @@ const styles = StyleSheet.create({
     elevation: 8,
   },
   userText: {
-    color: '#ECFDF5',
+    color: '#EFF6FF',
     fontSize: 14,
     lineHeight: 20,
     fontWeight: '500',
@@ -615,7 +615,7 @@ const styles = StyleSheet.create({
     borderColor: 'rgba(255, 255, 255, 0.08)',
   },
   assistantCardStreaming: {
-    borderColor: 'rgba(16, 185, 129, 0.4)',
+    borderColor: 'rgba(59, 130, 246, 0.4)',
     shadowColor: Colors.brand.emerald,
     shadowOffset: { width: 0, height: 0 },
     shadowOpacity: 0.2,
@@ -648,8 +648,8 @@ const styles = StyleSheet.create({
     borderWidth: 1,
   },
   groundingBadgeGrounded: {
-    backgroundColor: 'rgba(16, 185, 129, 0.12)',
-    borderColor: 'rgba(16, 185, 129, 0.3)',
+    backgroundColor: 'rgba(59, 130, 246, 0.12)',
+    borderColor: 'rgba(59, 130, 246, 0.3)',
   },
   groundingBadgeWarning: {
     backgroundColor: 'rgba(245, 158, 11, 0.12)',
@@ -670,7 +670,7 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(10, 10, 14, 0.85)',
     borderRadius: 10,
     borderWidth: 1,
-    borderColor: 'rgba(16, 185, 129, 0.25)',
+    borderColor: 'rgba(59, 130, 246, 0.25)',
     padding: 10,
     marginBottom: 10,
     gap: 8,
@@ -726,7 +726,7 @@ const styles = StyleSheet.create({
     gap: 4,
   },
   verifiedTag: {
-    backgroundColor: 'rgba(16, 185, 129, 0.1)',
+    backgroundColor: 'rgba(59, 130, 246, 0.1)',
     borderRadius: 4,
     paddingHorizontal: 6,
     paddingVertical: 2,

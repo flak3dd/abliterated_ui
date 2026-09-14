@@ -27,17 +27,13 @@ interface MatrixDirectorHUDProps {
 }
 
 const PHASES: { id: MatrixPhase; label: string }[] = [
-  { id: 'PHASE_1_HEX', label: '1: Uplink' },
-  { id: 'PHASE_2_HYDRA', label: '2: Hydra' },
-  { id: 'PHASE_2B_SHIFT', label: '2b: Shift' },
-  { id: 'PHASE_3_CIPHER', label: '3: Cipher' },
-  { id: 'PHASE_4_RAIN', label: '4: Rain' },
-  { id: 'PHASE_5_FREEZE', label: '5: Freeze' },
-  { id: 'PHASE_6_SKULL', label: '6: Skull' },
-  { id: 'PHASE_7_AMBIENT', label: '7: Ambient' },
+  { id: 'PHASE_3_CIPHER', label: 'Cipher' },
+  { id: 'PHASE_4_RAIN', label: 'Rain' },
+  { id: 'PHASE_5_FREEZE', label: 'Freeze' },
+  { id: 'PHASE_7_AMBIENT', label: 'Ambient' },
 ];
 
-const SPECTRUMS: MatrixSpectrum[] = ['green', 'blue', 'amber', 'rose', 'violet'];
+const SPECTRUMS: MatrixSpectrum[] = ['rainbow', 'blue', 'green', 'amber', 'rose', 'violet'];
 
 export const MatrixDirectorHUD: React.FC<MatrixDirectorHUDProps> = ({ onClose }) => {
   const {
@@ -201,7 +197,13 @@ export const MatrixDirectorHUD: React.FC<MatrixDirectorHUDProps> = ({ onClose })
                   key={spec}
                   style={[
                     styles.colorDot,
-                    { backgroundColor: pal.t1 },
+                    spec === 'rainbow'
+                      ? ({
+                          backgroundImage:
+                            'linear-gradient(135deg, #ff004d, #ffb000, #39ff14, #00e5ff, #a855f7)',
+                          backgroundColor: pal.t1,
+                        } as any)
+                      : { backgroundColor: pal.t1 },
                     isSelected && styles.colorDotActive,
                   ]}
                   onPress={() => handleSelectSpectrum(spec)}

@@ -23,6 +23,12 @@ export const SPARK_IMAGE_MODELS: ImageModelOption[] = [
     desc: 'Superior prompt adherence & compositional depth',
   },
   {
+    id: 'seedvr2-7b',
+    name: 'SeedVR2 7B',
+    badge: 'UPSCALE',
+    desc: 'Video restoration & high-res upscale diffusion',
+  },
+  {
     id: 'z-image-turbo-nsfw-nvfp4',
     name: 'Turbo NVFP4',
     badge: 'FAST 4-STEP',
@@ -149,7 +155,7 @@ const styles = StyleSheet.create({
   },
   pillActive: {
     borderColor: Colors.brand.emerald,
-    backgroundColor: 'rgba(16, 185, 129, 0.1)',
+    backgroundColor: 'rgba(59, 130, 246, 0.1)',
   },
   headerRow: {
     flexDirection: 'row',

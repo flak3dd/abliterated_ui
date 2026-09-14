@@ -52,7 +52,11 @@ export interface Endpoint {
   port: number;
   latencyMs: number;
   isOnline: boolean;
-  type: 'direct_lan' | 'secondary_lan' | 'tailscale' | 'localhost';
+  type: 'public_cloud' | 'custom' | 'direct_lan' | 'secondary_lan' | 'tailscale' | 'localhost';
+  baseUrl?: string;
+  provider?: 'abliterated' | 'featherless' | 'custom';
+  apiKey?: string;
+  defaultModel?: string;
 }
 
 export type ServiceStatus = 'ONLINE' | 'STANDBY' | 'READY' | 'OFFLINE';
@@ -91,6 +95,8 @@ export interface GeneratedImage {
   model: string;
   timestamp: number;
   hasMask?: boolean;
+  isFallback?: boolean;
+  error?: string;
 }
 
 export type VoiceState = 'idle' | 'listening' | 'thinking' | 'speaking';

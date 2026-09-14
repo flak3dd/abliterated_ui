@@ -181,7 +181,7 @@ export const PulsingVoiceOrb: React.FC<VoiceOrbProps> = ({ state }) => {
       ? Colors.brand.sky
       : state === 'speaking'
       ? Colors.brand.emerald
-      : '#10B981';
+      : Colors.brand.emerald;
 
   return (
     <View style={styles.wrapper}>
@@ -216,7 +216,7 @@ export const PulsingVoiceOrb: React.FC<VoiceOrbProps> = ({ state }) => {
             borderColor:
               state === 'thinking'
                 ? 'rgba(56, 189, 248, 0.6)'
-                : 'rgba(16, 185, 129, 0.6)',
+                : 'rgba(59, 130, 246, 0.6)',
           },
         ]}
       >
@@ -265,7 +265,7 @@ const styles = StyleSheet.create({
     borderWidth: 2.5,
     alignItems: 'center',
     justifyContent: 'center',
-    shadowColor: '#10B981',
+    shadowColor: Colors.brand.emerald,
     shadowOpacity: 0.6,
     shadowRadius: 28,
     elevation: 12,

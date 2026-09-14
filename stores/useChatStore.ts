@@ -11,6 +11,12 @@ import {
 } from '../services/zipService';
 import { telemetryBridge } from '../services/matrix/TelemetryStreamBridge';
 import { evaluateFactualGrounding } from '../services/hallucinationDetector';
+import {
+  markFileDirty,
+  markFileDeleted,
+  markEnvReplaceAll,
+  markEnvAllDirty,
+} from '../services/sandboxDirty';
 
 const STORAGE_KEY = '@spark_chat_vault_v3';
 
@@ -44,9 +50,26 @@ interface ChatState {
     content: string,
     language?: string
   ) => void;
+  addOrUpdateFiles: (
+    envId: string,
+    files: { path: string; content: string; language?: string }[]
+  ) => void;
   removeFile: (envId: string, path: string) => void;
   clearEnvironment: (envId: string) => void;
   downloadActiveEnvironmentZip: () => void;
+  flushSave: () => Promise<void>;
+}
+
+let saveTimer: ReturnType<typeof setTimeout> | null = null;
+let persistDirty = false;
+
+function scheduleSave() {
+  persistDirty = true;
+  if (saveTimer) return;
+  saveTimer = setTimeout(() => {
+    saveTimer = null;
+    void useChatStore.getState().saveToStorage();
+  }, 400);
 }
 
 function createInitialEnvironment(sessionId: string): SessionEnvironment {
@@ -133,11 +156,13 @@ export const useChatStore = create<ChatState>((set, get) => ({
       messages: { ...state.messages, [newId]: [] },
     }));
 
-    get().saveToStorage();
+    markEnvAllDirty(newEnv.id, Object.keys(newEnv.files));
+    void get().flushSave();
     return newId;
   },
 
   selectSession: (id: string) => {
+    void get().flushSave();
     set({ activeSessionId: id });
   },
 
@@ -167,7 +192,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         environments: remainingEnvironments,
       };
     });
-    get().saveToStorage();
+    void get().flushSave();
   },
 
   clearCurrentSession: () => {
@@ -180,7 +205,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         [activeId]: [],
       },
     }));
-    get().saveToStorage();
+    scheduleSave();
   },
 
   addOrUpdateFile: (
@@ -189,33 +214,43 @@ export const useChatStore = create<ChatState>((set, get) => ({
     content: string,
     language?: string
   ) => {
+    get().addOrUpdateFiles(envId, [{ path, content, language }]);
+  },
+
+  addOrUpdateFiles: (
+    envId: string,
+    files: { path: string; content: string; language?: string }[]
+  ) => {
+    if (!files.length) return;
     set((state) => {
       const targetEnv = state.environments[envId];
       if (!targetEnv) return state;
 
-      const updatedFile: WorkspaceFile = {
-        path,
-        content,
-        language: language || 'text',
-        updatedAt: Date.now(),
-        sizeBytes: new TextEncoder().encode(content).length,
-      };
+      const nextFiles = { ...targetEnv.files };
+      const now = Date.now();
+      for (const f of files) {
+        nextFiles[f.path] = {
+          path: f.path,
+          content: f.content,
+          language: f.language || 'text',
+          updatedAt: now,
+          sizeBytes: new TextEncoder().encode(f.content).length,
+        };
+        markFileDirty(envId, f.path);
+      }
 
       return {
         environments: {
           ...state.environments,
           [envId]: {
             ...targetEnv,
-            files: {
-              ...targetEnv.files,
-              [path]: updatedFile,
-            },
-            updatedAt: Date.now(),
+            files: nextFiles,
+            updatedAt: now,
           },
         },
       };
     });
-    get().saveToStorage();
+    scheduleSave();
   },
 
   removeFile: (envId: string, path: string) => {
@@ -237,7 +272,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
         },
       };
     });
-    get().saveToStorage();
+    markFileDeleted(envId, path);
+    scheduleSave();
   },
 
   clearEnvironment: (envId: string) => {
@@ -256,7 +292,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
         },
       };
     });
-    get().saveToStorage();
+    markEnvReplaceAll(envId);
+    scheduleSave();
   },
 
   downloadActiveEnvironmentZip: () => {
@@ -394,7 +431,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
               activeAbortController: null,
             };
           });
-          get().saveToStorage();
+          void get().flushSave();
           return;
         }
       }
@@ -484,9 +521,18 @@ The user can spin up a live temporary environment at any time to build, run, and
    - Include type hints, parameter docstrings, and robust error handling.
    - Deterministic and testable: Avoid hardcoded external network calls or blocking loops in unit tests; use mocking or self-contained fixtures.`;
 
+      const meshState = useMeshStore.getState();
+      const activeEp = meshState.getActiveEndpoint?.() || meshState.candidates.find((c) => c.host === activeHost);
+      const apiKey = activeEp?.provider === 'featherless'
+        ? meshState.featherlessApiKey
+        : meshState.abliteratedApiKey;
+      const model = activeEp?.defaultModel;
+
       await streamChatCompletion({
         host: activeHost,
         port: activePort,
+        model,
+        apiKey,
         temperature: isAntiHallucination ? 0.0 : 0.7,
         antiHallucination: isAntiHallucination,
         messages: [
@@ -570,6 +616,7 @@ The user can spin up a live temporary environment at any time to build, run, and
                   const updatedFiles = { ...targetEnv.files };
                   for (const f of extractedFiles) {
                     updatedFiles[f.path] = f;
+                    markFileDirty(session.envId, f.path);
                   }
                   nextEnvironments = {
                     ...state.environments,
@@ -592,7 +639,7 @@ The user can spin up a live temporary environment at any time to build, run, and
                 activeAbortController: null,
               };
             });
-            get().saveToStorage();
+            void get().flushSave();
           },
           onError: (error: Error) => {
             console.error('Streaming error in ChatStore:', error);
@@ -612,7 +659,7 @@ The user can spin up a live temporary environment at any time to build, run, and
       controller.abort();
     }
     set({ isStreaming: false, activeAbortController: null });
-    get().saveToStorage();
+    void get().flushSave();
   },
 
   loadFromStorage: async () => {
@@ -648,8 +695,13 @@ The user can spin up a live temporary environment at any time to build, run, and
           activeSessionId: sessions.length > 0 ? sessions[0].id : null,
         });
 
+        for (const env of Object.values(environments)) {
+          markEnvAllDirty(env.id, Object.keys(env.files));
+        }
+
         if (migrated) {
-          get().saveToStorage();
+          persistDirty = true;
+          await get().saveToStorage();
         }
       } else {
         // Initialize with default welcome session & environment
@@ -719,7 +771,9 @@ Ready for streaming completions.`,
           messages: { [welcomeId]: welcomeMsgs },
         });
 
-        get().saveToStorage();
+        markEnvAllDirty(welcomeEnv.id, Object.keys(welcomeEnv.files));
+        persistDirty = true;
+        await get().saveToStorage();
       }
     } catch (e) {
       console.error('Failed to load chat history', e);
@@ -727,6 +781,12 @@ Ready for streaming completions.`,
   },
 
   saveToStorage: async () => {
+    if (!persistDirty) return;
+    persistDirty = false;
+    if (saveTimer) {
+      clearTimeout(saveTimer);
+      saveTimer = null;
+    }
     try {
       const { sessions, messages, environments } = get();
       await AsyncStorage.setItem(
@@ -734,17 +794,54 @@ Ready for streaming completions.`,
         JSON.stringify({ sessions, messages, environments })
       );
     } catch (e) {
+      persistDirty = true;
       console.error('Failed to persist chat history', e);
     }
+  },
+
+  flushSave: async () => {
+    persistDirty = true;
+    await get().saveToStorage();
   },
 }));
 
 // Wire Multi-Agent Swarm events directly into Chat store
+const swarmFileBuf: { envId: string; path: string; content: string; language?: string }[] = [];
+let swarmFileTimer: ReturnType<typeof setTimeout> | null = null;
+
+function flushSwarmFileBuf() {
+  swarmFileTimer = null;
+  if (!swarmFileBuf.length) return;
+  const byEnv = new Map<string, typeof swarmFileBuf>();
+  while (swarmFileBuf.length) {
+    const item = swarmFileBuf.shift()!;
+    const list = byEnv.get(item.envId) || [];
+    list.push(item);
+    byEnv.set(item.envId, list);
+  }
+  const store = useChatStore.getState();
+  for (const [envId, files] of byEnv) {
+    store.addOrUpdateFiles(envId, files);
+  }
+}
+
 registerSwarmListeners(
   (swarm) => useChatStore.getState().updateLastAssistantMessageSwarm(swarm),
-  (envId, file) => useChatStore.getState().addOrUpdateFile(envId, file.path, file.content, file.language),
+  (envId, file) => {
+    swarmFileBuf.push({
+      envId,
+      path: file.path,
+      content: file.content,
+      language: file.language,
+    });
+    if (!swarmFileTimer) {
+      swarmFileTimer = setTimeout(flushSwarmFileBuf, 50);
+    }
+  },
   async () => {
     try {
+      flushSwarmFileBuf();
+      await useChatStore.getState().flushSave();
       const { useSandboxStore } = await import('./useSandboxStore');
       await useSandboxStore.getState().materializeActiveEnv();
       await useSandboxStore.getState().runTestsForEnv();
@@ -753,3 +850,14 @@ registerSwarmListeners(
     }
   }
 );
+
+if (typeof window !== 'undefined') {
+  window.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden') {
+      void useChatStore.getState().flushSave();
+    }
+  });
+  window.addEventListener('beforeunload', () => {
+    void useChatStore.getState().flushSave();
+  });
+}

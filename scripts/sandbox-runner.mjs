@@ -10,13 +10,27 @@
  */
 
 import http from 'node:http';
-import { mkdir, writeFile, rm, readdir, stat } from 'node:fs/promises';
+import { mkdir, writeFile, rm } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { exec } from 'node:child_process';
 import { promisify } from 'node:util';
 
 const execP = promisify(exec);
+
+async function mapLimit(items, limit, fn) {
+  const ret = new Array(items.length);
+  let i = 0;
+  const n = Math.max(1, Math.min(limit, items.length || 1));
+  async function worker() {
+    while (i < items.length) {
+      const idx = i++;
+      ret[idx] = await fn(items[idx], idx);
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(n, Math.max(items.length, 1)) }, worker));
+  return ret;
+}
 
 const PORT = Number(process.env.SANDBOX_PORT || 17330);
 const HOST = process.env.SANDBOX_HOST || '0.0.0.0';
@@ -93,13 +107,22 @@ const server = http.createServer(async (req, res) => {
       const body = await parseJsonBody(req);
       const envId = String(body.envId || `env_${Date.now()}`).replace(/[^a-zA-Z0-9_\-]/g, '_');
       const files = body.files || {};
+      const deleted = Array.isArray(body.deleted) ? body.deleted : [];
+      const replaceAll = Boolean(body.replaceAll);
       const target = body.target || 'local_mac';
+      const fileEntries = Object.entries(files);
 
       if (target === 'dgx_spark') {
         const remoteDir = `${SANDBOX_BASE_REMOTE}/${envId}`;
-        const commands = [`mkdir -p "${remoteDir}"`];
+        const commands = [];
+        if (replaceAll) commands.push(`rm -rf "${remoteDir}"`);
+        commands.push(`mkdir -p "${remoteDir}"`);
+        for (const rel of deleted) {
+          const cleanPath = String(rel).replace(/\\/g, '/').replace(/^\/+/, '');
+          if (cleanPath) commands.push(`rm -f "${remoteDir}/${cleanPath}"`);
+        }
 
-        for (const [filePath, fileData] of Object.entries(files)) {
+        for (const [filePath, fileData] of fileEntries) {
           const cleanPath = filePath.replace(/\\/g, '/');
           const dir = path.dirname(cleanPath);
           if (dir && dir !== '.') {
@@ -117,7 +140,7 @@ const server = http.createServer(async (req, res) => {
             envId,
             target: 'dgx_spark',
             path: remoteDir,
-            filesCount: Object.keys(files).length,
+            filesCount: fileEntries.length,
           });
         } catch (err) {
           return sendJson(res, 500, {
@@ -127,21 +150,30 @@ const server = http.createServer(async (req, res) => {
         }
       } else {
         const localDir = path.join(SANDBOX_BASE_LOCAL, envId);
+        if (replaceAll) {
+          await rm(localDir, { recursive: true, force: true });
+        }
         await mkdir(localDir, { recursive: true });
 
-        for (const [filePath, fileData] of Object.entries(files)) {
+        for (const rel of deleted) {
+          const cleanPath = String(rel).replace(/\\/g, '/').replace(/^\/+/, '');
+          if (!cleanPath) continue;
+          await rm(path.join(localDir, cleanPath), { force: true });
+        }
+
+        await mapLimit(fileEntries, 8, async ([filePath, fileData]) => {
           const cleanPath = filePath.replace(/\\/g, '/');
           const absPath = path.join(localDir, cleanPath);
           await mkdir(path.dirname(absPath), { recursive: true });
           await writeFile(absPath, fileData.content || '', 'utf8');
-        }
+        });
 
         return sendJson(res, 200, {
           ok: true,
           envId,
           target: 'local_mac',
           path: localDir,
-          filesCount: Object.keys(files).length,
+          filesCount: fileEntries.length,
         });
       }
     }

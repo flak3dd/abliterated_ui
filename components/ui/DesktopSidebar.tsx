@@ -120,8 +120,8 @@ export const DesktopSidebar: React.FC<DesktopSidebarProps> = ({ onOpenEnvModal }
           <Cpu size={18} color={Colors.brand.emerald} />
         </View>
         <View style={styles.brandMeta}>
-          <Text style={styles.brandTitle}>Sovereign Spark</Text>
-          <Text style={styles.brandSubtitle}>DGX GB10 • Blackwell</Text>
+          <Text style={styles.brandTitle}>Abliterated AI</Text>
+          <Text style={styles.brandSubtitle}>Sovereign Cloud • NVFP4</Text>
         </View>
       </View>
 
@@ -279,7 +279,7 @@ export const DesktopSidebar: React.FC<DesktopSidebarProps> = ({ onOpenEnvModal }
             >
               <Cpu size={11} color={target === 'dgx_spark' ? Colors.brand.sky : Colors.text.tertiary} />
               <Text style={[styles.targetChoiceText, target === 'dgx_spark' && styles.targetChoiceTextActiveSky]}>
-                DGX
+                Cloud
               </Text>
             </TouchableOpacity>
           </View>
@@ -296,7 +296,7 @@ export const DesktopSidebar: React.FC<DesktopSidebarProps> = ({ onOpenEnvModal }
 
         <View style={styles.clusterInfoRow}>
           <Text style={styles.clusterHostText} numberOfLines={1}>
-            {activeHost || '192.168.4.103'}
+            {activeHost || 'api.abliterated.io'}
           </Text>
           <PingIndicator />
         </View>
@@ -330,9 +330,9 @@ const styles = StyleSheet.create({
     width: 32,
     height: 32,
     borderRadius: 8,
-    backgroundColor: 'rgba(16, 185, 129, 0.1)',
+    backgroundColor: 'rgba(59, 130, 246, 0.1)',
     borderWidth: 1,
-    borderColor: 'rgba(16, 185, 129, 0.25)',
+    borderColor: 'rgba(59, 130, 246, 0.25)',
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -502,9 +502,9 @@ const styles = StyleSheet.create({
     marginBottom: 2,
   },
   sessionCardActive: {
-    backgroundColor: 'rgba(16, 185, 129, 0.08)',
+    backgroundColor: 'rgba(59, 130, 246, 0.08)',
     borderWidth: 1,
-    borderColor: 'rgba(16, 185, 129, 0.2)',
+    borderColor: 'rgba(59, 130, 246, 0.2)',
   },
   sessionTitle: {
     fontSize: 11.5,
@@ -547,8 +547,8 @@ const styles = StyleSheet.create({
     borderColor: 'rgba(255, 255, 255, 0.06)',
   },
   targetChoiceActive: {
-    borderColor: 'rgba(16, 185, 129, 0.3)',
-    backgroundColor: 'rgba(16, 185, 129, 0.08)',
+    borderColor: 'rgba(59, 130, 246, 0.3)',
+    backgroundColor: 'rgba(59, 130, 246, 0.08)',
   },
   targetChoiceText: {
     fontSize: 9.5,

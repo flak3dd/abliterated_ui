@@ -1,9 +1,9 @@
 {
   "expo": {
-    "name": "Spark AI",
-    "slug": "spark-mobile-client",
+    "name": "Abliterated AI",
+    "slug": "abliterated-ai",
     "version": "2.0.0",
-    "scheme": "spark",
+    "scheme": "abliterated",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "dark",
@@ -15,10 +15,10 @@
     },
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.sovereign.spark",
+      "bundleIdentifier": "com.abliterated.app",
       "infoPlist": {
-        "NSCameraUsageDescription": "Spark AI needs camera access for inpainting and image synthesis.",
-        "NSMicrophoneUsageDescription": "Spark AI needs microphone access for hands-free voice mode."
+        "NSCameraUsageDescription": "Abliterated AI needs camera access for inpainting and image synthesis.",
+        "NSMicrophoneUsageDescription": "Abliterated AI needs microphone access for hands-free voice mode."
       }
     },
     "android": {
@@ -26,7 +26,7 @@
         "foregroundImage": "./assets/android-icon-foreground.png",
         "backgroundColor": "#09090B"
       },
-      "package": "com.sovereign.spark",
+      "package": "com.abliterated.app",
       "permissions": [
         "CAMERA",
         "RECORD_AUDIO",

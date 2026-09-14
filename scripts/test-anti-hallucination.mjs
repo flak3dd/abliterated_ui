@@ -67,4 +67,45 @@ console.log('Result 3 (Hallucinated import):', {
   warnings: res3.warnings,
 });
 
+console.log('\n--- TEST 4: React / React Native code with components ---');
+const reactCode = `
+Here is the BouncingButton component:
+
+\`\`\`tsx BouncingButton.tsx
+import React, { useState } from 'react';
+import { Animated, TouchableOpacity, Text, StyleSheet } from 'react-native';
+
+export const BouncingButton = ({ title, onPress }: { title: string; onPress: () => void }) => {
+  return (
+    <TouchableOpacity onPress={onPress}>
+      <Text>{title}</Text>
+    </TouchableOpacity>
+  );
+};
+\`\`\`
+
+And using it in App.tsx:
+
+\`\`\`tsx App.tsx
+import React from 'react';
+import { View } from 'react-native';
+import { BouncingButton } from './BouncingButton';
+
+export default function App() {
+  return (
+    <View>
+      <BouncingButton title="Click Me" onPress={() => console.log('hello')} />
+    </View>
+  );
+}
+\`\`\`
+`;
+const res4 = evaluateFactualGrounding(reactCode, {});
+console.log('Result 4 (React Native Component):', {
+  isGrounded: res4.isGrounded,
+  score: res4.groundingScore,
+  warnings: res4.warnings,
+  verifiedFiles: res4.verifiedFiles,
+});
+
 console.log('\nAll anti-hallucination verification tests completed.');

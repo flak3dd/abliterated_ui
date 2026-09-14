@@ -2,7 +2,8 @@ import { create } from 'zustand';
 import { AspectRatioType, GeneratedImage } from '../types';
 import { useMeshStore } from './useMeshStore';
 import { useChatStore } from './useChatStore';
-import { generateKreaImage } from '../services/kreaService';
+import { generateKreaImage, MODEL_SAMPLER_DEFAULTS } from '../services/kreaService';
+import { fetchJsonWithTimeout, resolveApiUrl } from '../services/apiConfig';
 
 export interface SparkGpuStats {
   name: string;
@@ -20,6 +21,7 @@ interface StudioState {
   isMaskEnabled: boolean;
   sourceImageUri: string | null;
   maskPaths: string[];
+  canvasSize: { width: number; height: number } | null;
   history: GeneratedImage[];
   isGenerating: boolean;
   currentGeneratedImage: GeneratedImage | null;
@@ -48,9 +50,10 @@ interface StudioState {
   toggleMaskEnabled: (enabled?: boolean) => void;
   setSourceImageUri: (uri: string | null) => void;
   setMaskPaths: (paths: string[]) => void;
+  setCanvasSize: (size: { width: number; height: number }) => void;
   clearMask: () => void;
-  generateImage: () => Promise<void>;
-  enhancePrompt: () => void;
+  generateImage: () => Promise<GeneratedImage | null>;
+  enhancePrompt: () => Promise<'llm' | 'local' | false>;
   exportToSandbox: (img?: GeneratedImage | null) => boolean;
   selectFromHistory: (image: GeneratedImage) => void;
   clearHistory: () => void;
@@ -65,6 +68,7 @@ export const useStudioStore = create<StudioState>((set, get) => ({
   isMaskEnabled: false,
   sourceImageUri: null,
   maskPaths: [],
+  canvasSize: null,
   history: [],
   isGenerating: false,
   currentGeneratedImage: null,
@@ -82,7 +86,13 @@ export const useStudioStore = create<StudioState>((set, get) => ({
 
   setPrompt: (prompt) => set({ prompt }),
   setNegativePrompt: (negativePrompt) => set({ negativePrompt }),
-  setSelectedModel: (selectedModel) => set({ selectedModel }),
+  setSelectedModel: (selectedModel) => {
+    const defaults = MODEL_SAMPLER_DEFAULTS[selectedModel];
+    set({
+      selectedModel,
+      ...(defaults ? { steps: defaults.steps, guidanceScale: defaults.guidanceScale } : {}),
+    });
+  },
   setAspectRatio: (aspectRatio) => set({ aspectRatio }),
   setBrushSize: (brushSize) => set({ brushSize }),
   setSteps: (steps) => set({ steps }),
@@ -97,13 +107,42 @@ export const useStudioStore = create<StudioState>((set, get) => ({
       isMaskEnabled: enabled !== undefined ? enabled : !state.isMaskEnabled,
     })),
   setSourceImageUri: (sourceImageUri) =>
-    set({ sourceImageUri, maskPaths: [], isMaskEnabled: false }),
+    set({
+      sourceImageUri,
+      currentGeneratedImage: null,
+      maskPaths: [],
+      isMaskEnabled: Boolean(sourceImageUri),
+    }),
   setMaskPaths: (maskPaths) => set({ maskPaths }),
+  setCanvasSize: (canvasSize) => {
+    const prev = get().canvasSize;
+    if (
+      prev &&
+      Math.abs(prev.width - canvasSize.width) < 1 &&
+      Math.abs(prev.height - canvasSize.height) < 1
+    ) {
+      return;
+    }
+    set({ canvasSize });
+  },
   clearMask: () => set({ maskPaths: [] }),
 
   generateImage: async () => {
-    const { prompt, negativePrompt, selectedModel, aspectRatio, sourceImageUri, maskPaths, isGenerating, steps, guidanceScale, seed } = get();
-    if (!prompt.trim() || isGenerating) return;
+    const {
+      prompt,
+      negativePrompt,
+      selectedModel,
+      aspectRatio,
+      sourceImageUri,
+      maskPaths,
+      canvasSize,
+      brushSize,
+      isGenerating,
+      steps,
+      guidanceScale,
+      seed,
+    } = get();
+    if (!prompt.trim() || isGenerating) return null;
 
     const startTime = Date.now();
     const activeHost = useMeshStore.getState().activeHost;
@@ -116,20 +155,36 @@ export const useStudioStore = create<StudioState>((set, get) => ({
       generationElapsedSec: 0,
     });
 
-    let pollInterval: ReturnType<typeof setInterval> | null = setInterval(async () => {
+    let pollBusy = false;
+    const pollInterval: ReturnType<typeof setInterval> = setInterval(async () => {
+      if (pollBusy) return;
+      pollBusy = true;
       const elapsed = Math.floor((Date.now() - startTime) / 1000);
 
-      // 1. Query Spark Image Bridge progress
       try {
-        const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), 900);
-        const res = await fetch('http://' + activeHost + ':7860/progress', { signal: controller.signal });
-        clearTimeout(timeout);
+        const progressUrls = [
+          resolveApiUrl(activeHost, 7860, '/v1/progress'),
+          resolveApiUrl(activeHost, 7860, '/progress'),
+        ];
+        let pData: any = null;
+        for (const progressUrl of progressUrls) {
+          const res = await fetchJsonWithTimeout(progressUrl, 900);
+          if (res.ok && res.data) {
+            pData = res.data;
+            break;
+          }
+        }
 
-        if (res.ok) {
-          const pData = await res.json();
-          const pct = typeof pData.progress === 'number' ? pData.progress : 0;
+        if (pData) {
+          const rawPct = typeof pData.progress === 'number' ? pData.progress : 0;
+          const pct = rawPct <= 1 ? rawPct * 100 : rawPct;
           const status = pData.status || 'running';
+          const reportedStep =
+            typeof pData.step === 'number'
+              ? pData.step
+              : typeof pData.current_step === 'number'
+              ? pData.current_step
+              : null;
 
           let statusStr = 'Latent Diffusion Synthesis';
           let stepStr = '';
@@ -141,7 +196,10 @@ export const useStudioStore = create<StudioState>((set, get) => ({
             statusStr = 'Neural VAE Decoding & Base64 Encode';
             stepStr = 'Finalizing Pixels';
           } else if (status === 'running') {
-            const currentStep = Math.max(1, Math.min(steps, Math.round(((pct - 5) / 90) * steps)));
+            const currentStep =
+              reportedStep !== null
+                ? Math.max(1, Math.min(steps, reportedStep))
+                : Math.max(1, Math.min(steps, Math.round(((pct - 5) / 90) * steps)));
             stepStr = 'Step ' + currentStep + ' of ' + steps + ' (Denoising)';
             statusStr = 'Latent Diffusion Sampling';
           } else if (status === 'done') {
@@ -150,35 +208,42 @@ export const useStudioStore = create<StudioState>((set, get) => ({
           }
 
           set((state) => ({
-            generationProgress: Math.max(state.generationProgress, pct),
+            generationProgress: Math.max(state.generationProgress, Math.max(0, Math.min(99, pct))),
             generationStatusText: statusStr,
             generationStepText: stepStr,
             generationElapsedSec: elapsed,
           }));
+        } else {
+          set({ generationElapsedSec: elapsed });
         }
-      } catch {}
+      } catch {
+        set({ generationElapsedSec: elapsed });
+      }
 
-      // 2. Query Spark Controller for real-time GPU thermals & compute load
       try {
-        const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), 900);
-        const ctrlRes = await fetch('http://127.0.0.1:17325/api/status', { signal: controller.signal });
-        clearTimeout(timeout);
-
-        if (ctrlRes.ok) {
-          const ctrlData = await ctrlRes.json();
-          if (ctrlData.gpu && !ctrlData.gpu.error) {
+        const gpuHosts = Array.from(new Set(['127.0.0.1', activeHost].filter(Boolean)));
+        for (const gpuHost of gpuHosts) {
+          const ctrlRes = await fetchJsonWithTimeout(
+            resolveApiUrl(gpuHost, 17325, '/api/status'),
+            900
+          );
+          if (ctrlRes.ok && ctrlRes.data?.gpu && !ctrlRes.data.gpu.error) {
             set({
               sparkGpuStats: {
-                name: ctrlData.gpu.name || 'NVIDIA GB10',
-                tempC: ctrlData.gpu.tempC || 0,
-                gpuUtilPct: ctrlData.gpu.gpuUtilPct || 0,
-                powerDrawW: ctrlData.gpu.powerDrawW || 0,
+                name: ctrlRes.data.gpu.name || 'NVIDIA GB10',
+                tempC: ctrlRes.data.gpu.tempC || 0,
+                gpuUtilPct: ctrlRes.data.gpu.gpuUtilPct || 0,
+                powerDrawW: ctrlRes.data.gpu.powerDrawW || 0,
               },
             });
+            break;
           }
         }
-      } catch {}
+      } catch {
+        // GPU HUD is optional
+      } finally {
+        pollBusy = false;
+      }
     }, 700);
 
     try {
@@ -190,47 +255,97 @@ export const useStudioStore = create<StudioState>((set, get) => ({
         aspectRatio,
         imageUri: sourceImageUri,
         maskData: maskPaths,
+        canvasSize,
+        brushSize,
         model: selectedModel,
         steps,
         guidanceScale,
         seed,
       });
 
-      if (pollInterval) {
-        clearInterval(pollInterval);
-        pollInterval = null;
+      if (result.isFallback) {
+        set((state) => ({
+          isGenerating: false,
+          generationProgress: 0,
+          generationStatusText: result.error || 'Spark image bridge failed',
+          generationStepText: 'Failed',
+          currentGeneratedImage: result,
+          maskPaths: [],
+          isMaskEnabled: false,
+          history: [result, ...state.history.slice(0, 29)],
+        }));
+      } else {
+        set((state) => ({
+          isGenerating: false,
+          generationProgress: 100,
+          generationStatusText: 'Synthesis complete',
+          generationStepText: '100% Done',
+          currentGeneratedImage: result,
+          sourceImageUri: result.uri,
+          maskPaths: [],
+          isMaskEnabled: false,
+          history: [result, ...state.history.slice(0, 29)],
+        }));
       }
-
-      set((state) => ({
-        isGenerating: false,
-        generationProgress: 100,
-        generationStatusText: 'Synthesis complete',
-        generationStepText: '100% Done',
-        currentGeneratedImage: result,
-        sourceImageUri: result.uri,
-        maskPaths: [],
-        isMaskEnabled: false,
-        history: [result, ...state.history.slice(0, 29)],
-      }));
-    } catch (error) {
+      return result;
+    } catch (error: any) {
       console.error('Image generation error in StudioStore:', error);
-      if (pollInterval) {
-        clearInterval(pollInterval);
-        pollInterval = null;
-      }
       set({
         isGenerating: false,
-        generationStatusText: 'Error generating image',
+        generationProgress: 0,
+        generationStatusText: error?.message || 'Error generating image',
+        generationStepText: 'Failed',
       });
+      return null;
+    } finally {
+      clearInterval(pollInterval);
     }
   },
 
-  enhancePrompt: () => {
+  enhancePrompt: async () => {
     const { prompt } = get();
     const current = prompt.trim();
-    if (!current) return;
+    if (!current) return false;
 
-    // Check if already has optical and studio tokens
+    const activeHost = useMeshStore.getState().activeHost;
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 8000);
+    try {
+      const res = await fetch(resolveApiUrl(activeHost, 8000, '/v1/chat/completions'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: 'qwen-abliterated',
+          messages: [
+            {
+              role: 'system',
+              content:
+                'Rewrite the user image prompt for photorealistic diffusion. Keep the subject and intent. Add camera, lighting, and texture detail. Return ONLY the improved prompt with no quotes or preamble.',
+            },
+            { role: 'user', content: current },
+          ],
+          max_tokens: 180,
+          temperature: 0.4,
+          stream: false,
+        }),
+        signal: controller.signal,
+      });
+      if (res.ok) {
+        const data = await res.json();
+        const enhanced = String(data?.choices?.[0]?.message?.content || '')
+          .trim()
+          .replace(/^["']|["']$/g, '');
+        if (enhanced.length > 8 && enhanced.toLowerCase() !== current.toLowerCase()) {
+          set({ prompt: enhanced });
+          return 'llm';
+        }
+      }
+    } catch (e) {
+      console.warn('[studio] Prompt enhance via vLLM failed, using local tokens:', e);
+    } finally {
+      clearTimeout(timer);
+    }
+
     const enhancements = [
       '8k raw photo',
       'cinematic volumetric emerald lighting',
@@ -240,20 +355,19 @@ export const useStudioStore = create<StudioState>((set, get) => ({
       'masterpiece composition',
       'octane render 32bpc depth',
     ];
-
     const missing = enhancements.filter(
       (token) => !current.toLowerCase().includes(token.split(' ')[0])
     );
-
     if (missing.length > 0) {
-      const addedTokens = missing.slice(0, 4).join(', ');
-      set({ prompt: `${current}, ${addedTokens}` });
+      set({ prompt: current + ', ' + missing.slice(0, 4).join(', ') });
+      return 'local';
     }
+    return false;
   },
 
   exportToSandbox: (img) => {
     const targetImage = img || get().currentGeneratedImage;
-    if (!targetImage || !targetImage.uri) return false;
+    if (!targetImage || !targetImage.uri || targetImage.isFallback) return false;
 
     try {
       const chatState = useChatStore.getState();

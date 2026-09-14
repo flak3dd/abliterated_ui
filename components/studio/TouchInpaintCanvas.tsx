@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   View,
   Image,
@@ -29,6 +29,7 @@ import * as Haptics from 'expo-haptics';
 import Colors from '../../theme/colors';
 import { AspectRatioType } from '../../types';
 import { SparkGpuStats } from '../../stores/useStudioStore';
+import { IMAGE_SIZE_MAP } from '../../services/kreaService';
 
 function formatElapsed(sec: number): string {
   const m = Math.floor(sec / 60);
@@ -45,6 +46,8 @@ interface TouchInpaintCanvasProps {
   onMaskChange?: (paths: string[]) => void;
   onClearMask?: () => void;
   onImageDrop?: (uri: string) => void;
+  onCanvasLayout?: (size: { width: number; height: number }) => void;
+  isFallback?: boolean;
   onDownloadImage?: () => void;
   onCopyImage?: () => void;
   onSendToSandbox?: () => void;
@@ -73,6 +76,8 @@ export const TouchInpaintCanvas: React.FC<TouchInpaintCanvasProps> = ({
   onMaskChange,
   onClearMask,
   onImageDrop,
+  onCanvasLayout,
+  isFallback = false,
   onDownloadImage,
   onCopyImage,
   onSendToSandbox,
@@ -96,34 +101,80 @@ export const TouchInpaintCanvas: React.FC<TouchInpaintCanvasProps> = ({
   const [mousePos, setMousePos] = useState<{ x: number; y: number } | null>(null);
   const [zoomLevel, setZoomLevel] = useState(1.0);
 
-  const panResponder = PanResponder.create({
-    onStartShouldSetPanResponder: () => isMaskEnabled && !isGenerating,
-    onMoveShouldSetPanResponder: () => isMaskEnabled && !isGenerating,
-    onPanResponderGrant: (evt: GestureResponderEvent) => {
-      const { locationX, locationY } = evt.nativeEvent;
-      const initialPath = 'M ' + Math.round(locationX) + ' ' + Math.round(locationY);
-      setCurrentPath(initialPath);
-    },
-    onPanResponderMove: (evt: GestureResponderEvent) => {
-      const { locationX, locationY } = evt.nativeEvent;
-      setCurrentPath((prev) => prev + ' L ' + Math.round(locationX) + ' ' + Math.round(locationY));
-    },
-    onPanResponderRelease: () => {
-      if (currentPath) {
-        const nextPaths = [...paths, currentPath];
-        setPaths(nextPaths);
-        setCurrentPath('');
-        onMaskChange?.(nextPaths);
-      }
-    },
-  });
+  const pathsRef = useRef<string[]>([]);
+  const currentPathRef = useRef('');
+  const maskEnabledRef = useRef(isMaskEnabled);
+  const generatingRef = useRef(isGenerating);
+  const zoomRef = useRef(zoomLevel);
+  const onMaskChangeRef = useRef(onMaskChange);
+
+  useEffect(() => {
+    pathsRef.current = paths;
+  }, [paths]);
+  useEffect(() => {
+    maskEnabledRef.current = isMaskEnabled;
+  }, [isMaskEnabled]);
+  useEffect(() => {
+    generatingRef.current = isGenerating;
+  }, [isGenerating]);
+  useEffect(() => {
+    zoomRef.current = zoomLevel;
+  }, [zoomLevel]);
+  useEffect(() => {
+    onMaskChangeRef.current = onMaskChange;
+  }, [onMaskChange]);
+
+  useEffect(() => {
+    setPaths([]);
+    pathsRef.current = [];
+    setCurrentPath('');
+    currentPathRef.current = '';
+  }, [imageUri]);
+
+  useEffect(() => {
+    if (isMaskEnabled) setZoomLevel(1);
+  }, [isMaskEnabled]);
+
+  const panResponder = useRef(
+    PanResponder.create({
+      onStartShouldSetPanResponder: () =>
+        maskEnabledRef.current && !generatingRef.current && zoomRef.current === 1,
+      onMoveShouldSetPanResponder: () =>
+        maskEnabledRef.current && !generatingRef.current && zoomRef.current === 1,
+      onPanResponderGrant: (evt: GestureResponderEvent) => {
+        const { locationX, locationY } = evt.nativeEvent;
+        const initialPath = 'M ' + Math.round(locationX) + ' ' + Math.round(locationY);
+        currentPathRef.current = initialPath;
+        setCurrentPath(initialPath);
+      },
+      onPanResponderMove: (evt: GestureResponderEvent) => {
+        const { locationX, locationY } = evt.nativeEvent;
+        const next = currentPathRef.current + ' L ' + Math.round(locationX) + ' ' + Math.round(locationY);
+        currentPathRef.current = next;
+        setCurrentPath(next);
+      },
+      onPanResponderRelease: () => {
+        const stroke = currentPathRef.current;
+        if (stroke) {
+          const nextPaths = [...pathsRef.current, stroke];
+          pathsRef.current = nextPaths;
+          setPaths(nextPaths);
+          currentPathRef.current = '';
+          setCurrentPath('');
+          onMaskChangeRef.current?.(nextPaths);
+        }
+      },
+    })
+  ).current;
 
   const handleClear = () => {
     try {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     } catch (e) {}
     setPaths([]);
+    pathsRef.current = [];
     setCurrentPath('');
+    currentPathRef.current = '';
     onClearMask?.();
     onMaskChange?.([]);
   };
@@ -132,7 +183,8 @@ export const TouchInpaintCanvas: React.FC<TouchInpaintCanvasProps> = ({
     try {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     } catch (e) {}
-    const next = paths.slice(0, -1);
+    const next = pathsRef.current.slice(0, -1);
+    pathsRef.current = next;
     setPaths(next);
     onMaskChange?.(next);
   };
@@ -154,14 +206,8 @@ export const TouchInpaintCanvas: React.FC<TouchInpaintCanvasProps> = ({
   };
 
   const getResolutionDisplay = () => {
-    switch (aspectRatio) {
-      case '9:16': return '720 × 1280';
-      case '16:9': return '1280 × 720';
-      case '4:5': return '896 × 1120';
-      case '21:9': return '1344 × 576';
-      case '1:1':
-      default: return '1024 × 1024';
-    }
+    const size = IMAGE_SIZE_MAP[aspectRatio] || IMAGE_SIZE_MAP['1:1'];
+    return size.width + ' × ' + size.height;
   };
 
   const displayProgress = Math.max(0, Math.min(100, progress));
@@ -225,7 +271,14 @@ export const TouchInpaintCanvas: React.FC<TouchInpaintCanvasProps> = ({
       ]}
       {...webContainerProps}
     >
-      <View style={styles.canvasArea} {...panResponder.panHandlers}>
+      <View
+        style={styles.canvasArea}
+        onLayout={(e) => {
+          const { width, height } = e.nativeEvent.layout;
+          if (width > 0 && height > 0) onCanvasLayout?.({ width, height });
+        }}
+        {...panResponder.panHandlers}
+      >
         {/* Top Floating Studio Header */}
         <View style={styles.topBar}>
           <View style={styles.topBarLeft}>
@@ -290,6 +343,12 @@ export const TouchInpaintCanvas: React.FC<TouchInpaintCanvasProps> = ({
                   {isComparing ? 'Showing Original' : 'Hold to Compare'}
                 </Text>
               </TouchableOpacity>
+            )}
+
+            {isFallback && !isGenerating && (
+              <View style={styles.fallbackBadge}>
+                <Text style={styles.fallbackBadgeText}>BRIDGE FAILED</Text>
+              </View>
             )}
 
             {isMaskEnabled && !isGenerating && (
@@ -639,7 +698,7 @@ const styles = StyleSheet.create({
     gap: 5,
     backgroundColor: 'rgba(12, 13, 18, 0.85)',
     borderWidth: 1,
-    borderColor: 'rgba(16, 185, 129, 0.4)',
+    borderColor: 'rgba(59, 130, 246, 0.4)',
     paddingHorizontal: 9,
     paddingVertical: 5,
     borderRadius: 8,
@@ -664,7 +723,7 @@ const styles = StyleSheet.create({
     gap: 6,
     backgroundColor: 'rgba(12, 13, 18, 0.85)',
     borderWidth: 1,
-    borderColor: 'rgba(16, 185, 129, 0.4)',
+    borderColor: 'rgba(59, 130, 246, 0.4)',
     paddingHorizontal: 10,
     paddingVertical: 5,
     borderRadius: 8,
@@ -696,9 +755,9 @@ const styles = StyleSheet.create({
     width: 64,
     height: 64,
     borderRadius: 32,
-    backgroundColor: 'rgba(16, 185, 129, 0.08)',
+    backgroundColor: 'rgba(59, 130, 246, 0.08)',
     borderWidth: 1,
-    borderColor: 'rgba(16, 185, 129, 0.2)',
+    borderColor: 'rgba(59, 130, 246, 0.2)',
     alignItems: 'center',
     justifyContent: 'center',
     marginBottom: 14,
@@ -748,6 +807,20 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.brand.rose,
   },
   maskBadgeText: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: Colors.brand.rose,
+    letterSpacing: 0.5,
+  },
+  fallbackBadge: {
+    backgroundColor: 'rgba(244, 63, 94, 0.2)',
+    borderWidth: 1,
+    borderColor: 'rgba(244, 63, 94, 0.45)',
+    paddingHorizontal: 9,
+    paddingVertical: 4,
+    borderRadius: 9999,
+  },
+  fallbackBadgeText: {
     fontSize: 10,
     fontWeight: '800',
     color: Colors.brand.rose,
@@ -808,9 +881,9 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(255, 255, 255, 0.05)',
   },
   stripBtnSandbox: {
-    backgroundColor: 'rgba(16, 185, 129, 0.12)',
+    backgroundColor: 'rgba(59, 130, 246, 0.12)',
     borderWidth: 1,
-    borderColor: 'rgba(16, 185, 129, 0.3)',
+    borderColor: 'rgba(59, 130, 246, 0.3)',
   },
   stripBtnText: {
     fontSize: 12,
@@ -836,9 +909,9 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 7,
-    backgroundColor: 'rgba(16, 185, 129, 0.15)',
+    backgroundColor: 'rgba(59, 130, 246, 0.15)',
     borderWidth: 1,
-    borderColor: 'rgba(16, 185, 129, 0.35)',
+    borderColor: 'rgba(59, 130, 246, 0.35)',
     paddingHorizontal: 10,
     paddingVertical: 5,
     borderRadius: 9999,
@@ -847,12 +920,12 @@ const styles = StyleSheet.create({
     width: 7,
     height: 7,
     borderRadius: 4,
-    backgroundColor: '#10B981',
+    backgroundColor: '#3B82F6',
   },
   hudStatusText: {
     fontSize: 11,
     fontWeight: '800',
-    color: '#10B981',
+    color: '#3B82F6',
     letterSpacing: 0.8,
   },
   hudGpuBadge: {
@@ -883,7 +956,7 @@ const styles = StyleSheet.create({
   },
   hudStep: {
     fontSize: 14,
-    color: '#10B981',
+    color: '#3B82F6',
     fontWeight: '700',
     marginTop: 6,
     marginBottom: 18,
@@ -899,7 +972,7 @@ const styles = StyleSheet.create({
   },
   hudFill: {
     height: '100%',
-    backgroundColor: '#10B981',
+    backgroundColor: '#3B82F6',
     borderRadius: 3,
   },
   hudBottomRow: {
@@ -940,7 +1013,7 @@ const styles = StyleSheet.create({
   hudTimerValue: {
     fontSize: 12.5,
     fontWeight: '700',
-    color: '#10B981',
+    color: '#3B82F6',
     fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
   },
 });

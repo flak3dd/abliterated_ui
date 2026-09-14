@@ -88,7 +88,7 @@ export default function VoiceModalScreen() {
                     ? Colors.brand.emerald
                     : voiceState === 'thinking'
                     ? Colors.brand.sky
-                    : '#10B981',
+                    : Colors.brand.emerald,
               },
             ]}
           />

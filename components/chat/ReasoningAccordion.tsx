@@ -94,7 +94,7 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   headerStreaming: {
-    backgroundColor: 'rgba(16, 185, 129, 0.1)',
+    backgroundColor: 'rgba(59, 130, 246, 0.1)',
   },
   headerLeft: {
     flexDirection: 'row',

@@ -103,8 +103,8 @@ const styles = StyleSheet.create({
     borderColor: 'transparent',
   },
   cardActive: {
-    backgroundColor: 'rgba(16, 185, 129, 0.12)',
-    borderColor: 'rgba(16, 185, 129, 0.45)',
+    backgroundColor: 'rgba(59, 130, 246, 0.12)',
+    borderColor: 'rgba(59, 130, 246, 0.45)',
   },
   boxWrapper: {
     height: 22,
@@ -120,7 +120,7 @@ const styles = StyleSheet.create({
   },
   aspectBoxActive: {
     borderColor: Colors.brand.emerald,
-    backgroundColor: 'rgba(16, 185, 129, 0.25)',
+    backgroundColor: 'rgba(59, 130, 246, 0.25)',
   },
   ratioLabel: {
     fontSize: 11,

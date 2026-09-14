@@ -27,20 +27,16 @@ interface MatrixState {
 }
 
 const PHASES_IN_ORDER: MatrixPhase[] = [
-  'PHASE_1_HEX',
-  'PHASE_2_HYDRA',
-  'PHASE_2B_SHIFT',
   'PHASE_3_CIPHER',
   'PHASE_4_RAIN',
   'PHASE_5_FREEZE',
-  'PHASE_6_SKULL',
   'PHASE_7_AMBIENT',
 ];
 
 export const useMatrixStore = create<MatrixState>((set, get) => ({
   isOpen: false,
   phase: 'PHASE_4_RAIN',
-  spectrum: 'blue',
+  spectrum: 'rainbow',
   glyphSet: 'abliterad',
   speedMultiplier: 1.0,
   audioEnabled: false,
@@ -107,6 +103,6 @@ export const useMatrixStore = create<MatrixState>((set, get) => ({
   },
 
   resetSequence: () => {
-    set({ phase: 'PHASE_1_HEX', spectrum: 'green' });
+    set({ phase: 'PHASE_4_RAIN', spectrum: 'rainbow' });
   },
 }));

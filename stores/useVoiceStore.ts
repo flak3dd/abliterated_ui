@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import { VoiceState } from '../types';
 import { AudioService } from '../services/audioService';
 import { useMeshStore } from './useMeshStore';
+import { resolveApiUrl, buildApiHeaders } from '../services/apiConfig';
 
 interface VoiceStoreState {
   voiceState: VoiceState;
@@ -19,16 +20,16 @@ interface VoiceStoreState {
 }
 
 const VOICE_PRESET_ANSWERS = [
-  "I'm executing directly on your DGX Spark GB10 Blackwell hardware over the local mesh. Low latency pipeline confirmed.",
-  "Unified memory is holding at 23.6 gigabytes allocated. Thermals are stabilized at 44 degrees Celsius.",
-  "vLLM server on port 8000 is running full FP8 tensor throughput with zero cloud routing.",
-  "I've synchronized your local inpainting session and neural cache.",
+  "I'm executing directly on Abliterated Sovereign Cloud over low latency HTTPS. Neural pipeline active.",
+  "Sovereign H100 inference mesh is responding at peak throughput with zero telemetry leaks.",
+  "Abliterated Cloud and Featherless mesh are synchronized for uncensored voice responses.",
+  "I've synchronized your creative session, neural state, and code artifacts.",
 ];
 
 export const useVoiceStore = create<VoiceStoreState>((set, get) => ({
   voiceState: 'listening',
   userTranscript: '',
-  assistantReply: 'Spark AI voice engine initialized on GB10. I am listening...',
+  assistantReply: 'Abliterated Cloud voice engine initialized. I am listening...',
   isInterrupted: false,
   bargeInActive: false,
 
@@ -62,26 +63,33 @@ export const useVoiceStore = create<VoiceStoreState>((set, get) => ({
 
     set({
       userTranscript: speechText,
-      assistantReply: 'Thinking on DGX Spark...',
+      assistantReply: 'Thinking on Sovereign Cloud...',
       voiceState: 'thinking',
     });
 
-    const activeHost = useMeshStore.getState().activeHost;
-    const activePort = useMeshStore.getState().activePort;
+    const meshState = useMeshStore.getState();
+    const activeHost = meshState.activeHost;
+    const activePort = meshState.activePort;
+    const activeEp = meshState.getActiveEndpoint?.() || meshState.candidates.find((c) => c.host === activeHost);
+    const apiKey = activeEp?.provider === 'featherless'
+      ? meshState.featherlessApiKey
+      : meshState.abliteratedApiKey;
+    const model = activeEp?.defaultModel || (activeHost.includes('featherless') ? 'meta-llama/Meta-Llama-3.1-8B-Instruct' : 'qwen-abliterated');
 
     let responseText = '';
 
     try {
-      const res = await fetch(`http://${activeHost}:${activePort}/v1/chat/completions`, {
+      const url = resolveApiUrl(activeHost, activePort, '/v1/chat/completions');
+      const res = await fetch(url, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: buildApiHeaders(apiKey),
         body: JSON.stringify({
-          model: 'qwen-abliterated',
+          model,
           messages: [
             {
               role: 'system',
               content:
-                'You are Sovereign Spark. Reply in concise conversational spoken English (1-2 sentences max). Do not include formatting or code blocks.',
+                'You are Abliterated AI voice assistant. Reply in concise conversational spoken English (1-2 sentences max). Do not include markdown, formatting, or code blocks.',
             },
             { role: 'user', content: speechText },
           ],

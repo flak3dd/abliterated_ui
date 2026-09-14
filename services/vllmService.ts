@@ -1,4 +1,5 @@
 import { Message } from '../types';
+import { resolveApiUrl, buildApiHeaders } from './apiConfig';
 
 export interface StreamCallbacks {
   onToken: (token: string, isReasoning: boolean) => void;
@@ -8,7 +9,9 @@ export interface StreamCallbacks {
 
 export async function streamChatCompletion({
   host,
-  port = 8000,
+  port = 443,
+  model,
+  apiKey,
   messages,
   callbacks,
   abortSignal,
@@ -18,6 +21,8 @@ export async function streamChatCompletion({
 }: {
   host: string;
   port?: number;
+  model?: string;
+  apiKey?: string;
   messages: Array<{ role: string; content: string }>;
   callbacks: StreamCallbacks;
   abortSignal?: AbortSignal;
@@ -25,20 +30,26 @@ export async function streamChatCompletion({
   top_p?: number;
   antiHallucination?: boolean;
 }): Promise<void> {
-  const url = `http://${host}:${port}/v1/chat/completions`;
+  const url = resolveApiUrl(host, port, '/v1/chat/completions');
   const effectiveTemp = temperature !== undefined
     ? temperature
     : (antiHallucination ? 0.0 : 0.7);
 
+  const selectedModel =
+    model ||
+    (host.includes('featherless')
+      ? 'meta-llama/Meta-Llama-3.1-8B-Instruct'
+      : 'qwen-abliterated');
+
   try {
     const response = await fetch(url, {
       method: 'POST',
-      headers: {
+      headers: buildApiHeaders(apiKey, {
         'Content-Type': 'application/json',
         Accept: 'text/event-stream',
-      },
+      }),
       body: JSON.stringify({
-        model: 'qwen-abliterated',
+        model: selectedModel,
         messages,
         stream: true,
         temperature: effectiveTemp,
@@ -49,7 +60,7 @@ export async function streamChatCompletion({
     });
 
     if (!response.ok || !response.body) {
-      throw new Error(`vLLM endpoint responded with HTTP ${response.status}`);
+      throw new Error(`Inference endpoint (${selectedModel}) responded with HTTP ${response.status}`);
     }
 
     const reader = response.body.getReader();

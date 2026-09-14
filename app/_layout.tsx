@@ -10,8 +10,13 @@ import { useMeshStore } from '../stores/useMeshStore';
 export default function RootLayout() {
   const loadChat = useChatStore((s) => s.loadFromStorage);
   const probeAll = useMeshStore((s) => s.probeAll);
+  const loadApiKeys = useMeshStore((s) => s.loadApiKeys);
 
   useEffect(() => {
+    if (Platform.OS === 'web' && typeof document !== 'undefined') {
+      document.title = 'Abliterated AI • Sovereign Neural Studio';
+    }
+    loadApiKeys();
     loadChat();
     probeAll();
 
@@ -53,8 +58,8 @@ export default function RootLayout() {
                 background: rgba(255, 255, 255, 0.25);
               }
               ::selection {
-                background: rgba(16, 185, 129, 0.3);
-                color: #ECFDF5;
+                background: rgba(59, 130, 246, 0.35);
+                color: #EFF6FF;
               }
             `,
           }}

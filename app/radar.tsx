@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   StyleSheet,
   Text,
@@ -6,6 +6,7 @@ import {
   View,
   ScrollView,
   Switch,
+  TextInput,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
@@ -18,10 +19,13 @@ import {
   CheckCircle2,
   AlertTriangle,
   Flame,
+  Key,
+  Globe,
 } from 'lucide-react-native';
 import * as Haptics from 'expo-haptics';
 import Colors from '../theme/colors';
 import { useMeshStore } from '../stores/useMeshStore';
+import { resolveApiUrl } from '../services/apiConfig';
 
 export default function RadarModalScreen() {
   const router = useRouter();
@@ -31,10 +35,29 @@ export default function RadarModalScreen() {
     candidates,
     isProbing,
     simulationMode,
+    featherlessApiKey,
     probeAll,
     setActiveHost,
+    setApiKey,
     toggleSimulationMode,
   } = useMeshStore();
+
+  const [keyInput, setKeyInput] = useState(featherlessApiKey);
+  const [savedSuccess, setSavedSuccess] = useState(false);
+
+  useEffect(() => {
+    setKeyInput(featherlessApiKey);
+  }, [featherlessApiKey]);
+
+  const handleSaveKey = async () => {
+    try {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    } catch (e) {}
+    await setApiKey('featherless', keyInput);
+    setSavedSuccess(true);
+    setTimeout(() => setSavedSuccess(false), 2500);
+    probeAll();
+  };
 
   const handleClose = () => {
     try {
@@ -86,11 +109,11 @@ export default function RadarModalScreen() {
             <Text style={styles.activeRouteTitle}>ACTIVE DATA ROUTE</Text>
           </View>
           <Text style={styles.activeHostDisplay}>
-            http://{activeHost}:{activePort}
+            {resolveApiUrl(activeHost, activePort)}
           </Text>
           <Text style={styles.routeNote}>
-            All vLLM completions and Krea 2 RAW generative payloads stream over this
-            direct connection with zero cloud proxies.
+            All LLM chat completions, swarms, and generative image payloads stream securely over
+            HTTPS to sovereign AI endpoints with zero third-party telemetry leaks.
           </Text>
         </View>
 
@@ -117,10 +140,9 @@ export default function RadarModalScreen() {
         <View style={styles.endpointList}>
           {candidates.map((ep) => {
             const isSelected = ep.host === activeHost;
-            const isLan = ep.type === 'direct_lan' || ep.type === 'secondary_lan';
             const dotColor = !ep.isOnline
               ? Colors.brand.rose
-              : isLan
+              : ep.latencyMs <= 100
               ? Colors.brand.emerald
               : Colors.brand.amber;
 
@@ -141,7 +163,7 @@ export default function RadarModalScreen() {
                       )}
                     </View>
                     <Text style={styles.endpointUrl}>
-                      http://{ep.host}:{ep.port}
+                      {resolveApiUrl(ep.host, ep.port)}
                     </Text>
                   </View>
                 </View>
@@ -153,7 +175,7 @@ export default function RadarModalScreen() {
                       {
                         color: !ep.isOnline
                           ? Colors.brand.rose
-                          : ep.latencyMs <= 5
+                          : ep.latencyMs <= 100
                           ? Colors.brand.emerald
                           : Colors.brand.amber,
                       },
@@ -177,19 +199,44 @@ export default function RadarModalScreen() {
           })}
         </View>
 
+        {/* Featherless AI Key Card */}
+        <View style={styles.apiKeyCard}>
+          <View style={styles.apiKeyHeader}>
+            <Key size={16} color={Colors.brand.emerald} />
+            <Text style={styles.apiKeyTitle}>FEATHERLESS AI API KEY</Text>
+          </View>
+          <Text style={styles.apiKeyNote}>
+            Optional Bearer token for accessing uncensored open-weight models on the Featherless AI inference mesh (https://api.featherless.io).
+          </Text>
+          <View style={styles.apiKeyInputRow}>
+            <TextInput
+              style={styles.apiKeyInput}
+              value={keyInput}
+              onChangeText={setKeyInput}
+              placeholder="Enter Featherless API Key..."
+              placeholderTextColor="#71717A"
+              autoCapitalize="none"
+              autoCorrect={false}
+              secureTextEntry
+            />
+            <TouchableOpacity style={styles.saveKeyBtn} onPress={handleSaveKey} activeOpacity={0.8}>
+              <Text style={styles.saveKeyBtnText}>{savedSuccess ? 'Saved ✓' : 'Save Key'}</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+
         {/* Resilient Emulation Mode Toggle */}
         <View style={styles.simulationCard}>
           <View style={styles.simTextWrapper}>
             <Text style={styles.simTitle}>Hardware Emulation Fallback</Text>
             <Text style={styles.simDesc}>
-              Simulates GB10 telemetry and vLLM streaming tokens when physical node is offline
-              during local development.
+              Simulates sovereign cluster telemetry and streaming tokens when remote nodes are undergoing scheduled maintenance.
             </Text>
           </View>
           <Switch
             value={simulationMode}
             onValueChange={toggleSimulationMode}
-            trackColor={{ false: '#27272A', true: 'rgba(16, 185, 129, 0.4)' }}
+            trackColor={{ false: '#27272A', true: 'rgba(59, 130, 246, 0.4)' }}
             thumbColor={simulationMode ? Colors.brand.emerald : '#71717A'}
           />
         </View>
@@ -387,6 +434,62 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: '600',
     color: Colors.text.secondary,
+  },
+  apiKeyCard: {
+    backgroundColor: Colors.background.surface,
+    borderWidth: 1,
+    borderColor: Colors.border.default,
+    borderRadius: 14,
+    padding: 14,
+    marginBottom: 16,
+  },
+  apiKeyHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 6,
+  },
+  apiKeyTitle: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: Colors.brand.emerald,
+    letterSpacing: 0.6,
+  },
+  apiKeyNote: {
+    fontSize: 12,
+    color: Colors.text.tertiary,
+    lineHeight: 16,
+    marginBottom: 10,
+  },
+  apiKeyInputRow: {
+    flexDirection: 'row',
+    gap: 8,
+    alignItems: 'center',
+  },
+  apiKeyInput: {
+    flex: 1,
+    height: 38,
+    backgroundColor: Colors.background.surfaceElevated,
+    borderWidth: 1,
+    borderColor: Colors.border.default,
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    color: Colors.text.primary,
+    fontSize: 12.5,
+    fontFamily: 'Menlo',
+  },
+  saveKeyBtn: {
+    backgroundColor: Colors.brand.emerald,
+    height: 38,
+    paddingHorizontal: 14,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  saveKeyBtnText: {
+    color: '#09090B',
+    fontSize: 12,
+    fontWeight: '700',
   },
   simulationCard: {
     flexDirection: 'row',
