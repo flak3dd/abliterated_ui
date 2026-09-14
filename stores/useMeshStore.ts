@@ -29,8 +29,20 @@ interface MeshState {
 
 const DEFAULT_ENDPOINTS: Endpoint[] = [
   {
+    id: 'abliterated_ai_cloud',
+    name: 'Abliterated Cloud AI',
+    host: 'api.abliterated.ai',
+    port: 443,
+    latencyMs: -1,
+    isOnline: false,
+    type: 'public_cloud',
+    baseUrl: 'https://api.abliterated.ai',
+    provider: 'abliterated',
+    defaultModel: 'qwen-abliterated',
+  },
+  {
     id: 'abliterated_cloud',
-    name: 'Abliterated Sovereign Cloud',
+    name: 'Abliterated Cloud IO (Mirror)',
     host: 'api.abliterated.io',
     port: 443,
     latencyMs: -1,
@@ -88,7 +100,7 @@ const INITIAL_MICROSERVICES: Microservice[] = [
     port: 443,
     status: 'ONLINE',
     model: 'qwen-abliterated (FP8 / NVFP4)',
-    description: 'High-throughput sovereign inference cluster at https://api.abliterated.io',
+    description: 'High-throughput sovereign inference cluster at https://api.abliterated.ai',
   },
   {
     id: 'featherless_mesh',
@@ -139,7 +151,7 @@ async function checkUrl(url: string, headers?: Record<string, string>, timeoutMs
 }
 
 export const useMeshStore = create<MeshState>((set, get) => ({
-  activeHost: 'api.abliterated.io',
+  activeHost: 'api.abliterated.ai',
   activePort: 443,
   candidates: DEFAULT_ENDPOINTS,
   isProbing: false,

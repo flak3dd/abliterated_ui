@@ -16,7 +16,23 @@ export interface CloudProviderConfig {
 export const CLOUD_PROVIDERS: Record<string, CloudProviderConfig> = {
   abliterated: {
     id: 'abliterated_cloud',
-    name: 'Abliterated Cloud',
+    name: 'Abliterated Cloud AI',
+    host: 'api.abliterated.ai',
+    port: 443,
+    baseUrl: 'https://api.abliterated.ai',
+    provider: 'abliterated',
+    defaultModel: 'qwen-abliterated',
+    availableModels: [
+      'qwen-abliterated',
+      'gpt-oss-120b-abliterated',
+      'krea2-raw-fp8',
+    ],
+    description: 'Primary sovereign cloud inference cluster with NVFP4 hardware acceleration at api.abliterated.ai',
+    docsUrl: 'https://abliterated.app/docs',
+  },
+  abliterated_io: {
+    id: 'abliterated_io_mirror',
+    name: 'Abliterated Cloud IO (Mirror)',
     host: 'api.abliterated.io',
     port: 443,
     baseUrl: 'https://api.abliterated.io',
@@ -27,7 +43,7 @@ export const CLOUD_PROVIDERS: Record<string, CloudProviderConfig> = {
       'gpt-oss-120b-abliterated',
       'krea2-raw-fp8',
     ],
-    description: 'Primary sovereign cloud inference cluster with NVFP4 hardware acceleration',
+    description: 'Sovereign cloud cluster mirror at api.abliterated.io',
     docsUrl: 'https://abliterated.app/docs',
   },
   featherless: {
@@ -77,6 +93,7 @@ export function resolveApiUrl(hostOrUrl: string, port = 8000, path = ''): string
 
   // Known cloud domains always use HTTPS on standard port
   if (
+    hostOrUrl.includes('abliterated.ai') ||
     hostOrUrl.includes('abliterated.io') ||
     hostOrUrl.includes('featherless.io') ||
     hostOrUrl.includes('featherless.ai') ||

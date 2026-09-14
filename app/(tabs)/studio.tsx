@@ -807,7 +807,10 @@ export default function StudioScreen() {
                           <View style={styles.historyCardMeta}>
                             <Text style={styles.historyAspectRatioBadge}>{item.aspectRatio}</Text>
                             <Text style={styles.historyModelTag}>
-                              {item.isFallback ? 'FAILED' : item.model.split('-')[0]}
+                              {item.isFallback
+                                ? 'FAILED'
+                                : SPARK_IMAGE_MODELS.find((m) => m.id === item.model)?.name ||
+                                  item.model.split('-')[0]}
                             </Text>
                           </View>
                           <Text style={styles.historyCardPrompt} numberOfLines={3}>

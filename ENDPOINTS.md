@@ -8,6 +8,9 @@ Comprehensive reference guide for all microservices, network interfaces, REST ro
 
 | Route Name | Host IP / Address | Target Machine | Protocol | Role |
 |---|---|---|---|---|
+| **Abliterated Cloud AI (Primary)** | `api.abliterated.ai` | Sovereign Cloud Mesh | HTTPS (:443) | Primary sovereign cloud inference cluster (~15–35ms) |
+| **Abliterated Cloud IO (Mirror)** | `api.abliterated.io` | Sovereign Cloud Cluster | HTTPS (:443) | High-throughput sovereign inference & image bridge (~15–35ms) |
+| **Featherless AI Mesh** | `api.featherless.io` | Serverless Open-Weight Mesh | HTTPS (:443) | Global uncensored open-weight model router (~30–60ms) |
 | **Direct LAN (Primary)** | `192.168.4.103` | NVIDIA DGX Spark (GB10) | Ethernet / Wi-Fi | Lowest latency route for home/studio devices (~10–13ms) |
 | **Secondary LAN** | `192.168.4.101` | NVIDIA DGX Spark (NIC 2) | Ethernet | Redundant / secondary interface (~20–60ms) |
 | **Tailscale VPN** | `100.94.45.77` (`gx10-d0e7`) | NVIDIA DGX Spark | WireGuard / TS | Secure remote mesh access outside the local network (~10–25ms) |
@@ -17,16 +20,17 @@ Comprehensive reference guide for all microservices, network interfaces, REST ro
 
 ---
 
-## 2. Quick-Reference Matrix for Mobile & Desktop
+## 2. Quick-Reference Matrix for Cloud, Mobile & Desktop
 
-| Component | Port | Direct LAN URL (Phone Wi-Fi) | Tailscale URL (Remote Phone) | Localhost URL (Mac) |
-|---|---|---|---|---|
-| **vLLM Inference API** | `:8000` | `http://192.168.4.103:8000/v1/models` | `http://100.94.45.77:8000/v1/models` | `http://127.0.0.1:8000/v1/models` |
-| **Image Bridge** | `:7860` | `http://192.168.4.103:7860/health` | `http://100.94.45.77:7860/health` | `http://127.0.0.1:7860/health` |
-| **ComfyUI Cluster** | `:8188` | `http://192.168.4.103:8188/` | `http://100.94.45.77:8188/` | `http://127.0.0.1:8188/` |
-| **Spark Controller** | `:17325` | `http://192.168.4.103:17325/` | `http://100.94.45.77:17325/` | `http://127.0.0.1:17325/` |
-| **Gateway Router** | `:8080` | `http://192.168.4.50:8080/v1/models` | `http://100.120.81.22:8080/v1/models` | `http://127.0.0.1:8080/v1/models` |
-| **Mobile App (Web)** | `:8081` | `http://192.168.4.50:8081/` | `http://100.120.81.22:8081/` | `http://localhost:8081/` |
+| Component | Port | Cloud HTTPS URL (`api.abliterated.ai`) | Direct LAN URL (Phone Wi-Fi) | Tailscale URL (Remote Phone) | Localhost URL (Mac) |
+|---|---|---|---|---|---|
+| **vLLM Inference API** | `:443` / `:8000` | `https://api.abliterated.ai/v1/models` | `http://192.168.4.103:8000/v1/models` | `http://100.94.45.77:8000/v1/models` | `http://127.0.0.1:8000/v1/models` |
+| **Chat Streaming** | `:443` / `:8000` | `https://api.abliterated.ai/v1/chat/completions` | `http://192.168.4.103:8000/v1/chat/completions` | `http://100.94.45.77:8000/v1/chat/completions` | `http://127.0.0.1:8000/v1/chat/completions` |
+| **Image Bridge** | `:443` / `:7860` | `https://api.abliterated.ai/v1/images/generations` | `http://192.168.4.103:7860/health` | `http://100.94.45.77:7860/health` | `http://127.0.0.1:7860/health` |
+| **ComfyUI Cluster** | `:8188` | — | `http://192.168.4.103:8188/` | `http://100.94.45.77:8188/` | `http://127.0.0.1:8188/` |
+| **Spark Controller** | `:17325` | — | `http://192.168.4.103:17325/` | `http://100.94.45.77:17325/` | `http://127.0.0.1:17325/` |
+| **Gateway Router** | `:8080` | — | `http://192.168.4.50:8080/v1/models` | `http://100.120.81.22:8080/v1/models` | `http://127.0.0.1:8080/v1/models` |
+| **Public Web App** | `:443` / `:8081` | `https://web.abliterated.app` | `http://192.168.4.50:8081/` | `http://100.120.81.22:8081/` | `http://localhost:8081/` |
 
 ---
 
@@ -179,6 +183,34 @@ Mobile PWA and Expo development server for iOS, Android, and Web.
 #### Verification Command
 ```bash
 curl -s -I http://localhost:8081
+```
+
+---
+
+### 3.8 Abliterated Cloud AI Endpoints (`api.abliterated.ai` & `api.abliterated.io`)
+High-throughput sovereign inference cluster serving uncensored open weights over encrypted HTTPS.
+
+- **Primary URL**: `https://api.abliterated.ai`
+- **Mirror URL**: `https://api.abliterated.io`
+- **Supported Models**:
+  - `qwen-abliterated` (Default sovereign text generation)
+  - `gpt-oss-120b-abliterated` (Deep analytical reasoning)
+  - `krea2-raw-fp8` (Generative diffusion & inpainting)
+
+#### REST Endpoints
+- **`GET https://api.abliterated.ai/v1/models`**: List active loaded models and availability.
+- **`POST https://api.abliterated.ai/v1/chat/completions`**: Server-Sent Events (SSE) streaming chat completions.
+- **`POST https://api.abliterated.ai/v1/images/generations`**: High-resolution latent diffusion and inpaint generation.
+
+#### Verification Commands
+```bash
+# Check model availability
+curl -s https://api.abliterated.ai/v1/models
+
+# Test streaming completion
+curl -N -s https://api.abliterated.ai/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{"model": "qwen-abliterated", "messages": [{"role": "user", "content": "Ping"}], "stream": true}'
 ```
 
 ---

@@ -296,7 +296,7 @@ export const DesktopSidebar: React.FC<DesktopSidebarProps> = ({ onOpenEnvModal }
 
         <View style={styles.clusterInfoRow}>
           <Text style={styles.clusterHostText} numberOfLines={1}>
-            {activeHost || 'api.abliterated.io'}
+            {activeHost || 'api.abliterated.ai'}
           </Text>
           <PingIndicator />
         </View>
