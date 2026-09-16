@@ -4,6 +4,7 @@ import { useRouter } from 'expo-router';
 import * as Haptics from 'expo-haptics';
 import Colors from '../../theme/colors';
 import { useMeshStore } from '../../stores/useMeshStore';
+import { matchEndpoint } from '../../services/meshRouting';
 
 interface PingIndicatorProps {
   onPress?: () => void;
@@ -15,9 +16,10 @@ export const PingIndicator: React.FC<PingIndicatorProps> = ({
   showHostName = false,
 }) => {
   const router = useRouter();
-  const { candidates, activeHost } = useMeshStore();
-
-  const activeEndpoint = candidates.find((c) => c.host === activeHost);
+  const candidates = useMeshStore((s) => s.candidates);
+  const activeHost = useMeshStore((s) => s.activeHost);
+  const activePort = useMeshStore((s) => s.activePort);
+  const activeEndpoint = matchEndpoint(candidates, activeHost, activePort);
   const isOnline = activeEndpoint?.isOnline ?? false;
   const latency = activeEndpoint?.latencyMs ?? -1;
 
@@ -53,7 +55,7 @@ export const PingIndicator: React.FC<PingIndicatorProps> = ({
       <View style={[styles.dot, { backgroundColor: dotColor }]} />
       <Text style={styles.latencyText}>
         {showHostName && activeEndpoint ? `${activeEndpoint.name} · ` : ''}
-        {isOnline && latency >= 0 ? `${latency}ms` : 'Offline'}
+        {isOnline && latency >= 0 ? `${latency}ms` : '—'}
       </Text>
     </TouchableOpacity>
   );

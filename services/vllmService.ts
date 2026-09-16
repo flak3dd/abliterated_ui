@@ -1,5 +1,6 @@
 import { Message } from '../types';
 import { resolveApiUrl, buildApiHeaders } from './apiConfig';
+import { useMeshStore } from '../stores/useMeshStore';
 
 export interface StreamCallbacks {
   onToken: (token: string, isReasoning: boolean) => void;
@@ -74,11 +75,16 @@ export async function streamChatCompletion({
     ? temperature
     : (antiHallucination ? 0.0 : 0.7);
 
+  const live = useMeshStore.getState().servingModel;
+  const hostLc = (host || '').toLowerCase();
   const selectedModel =
     model ||
-    (host.includes('featherless')
+    live ||
+    (hostLc.includes('featherless')
       ? 'meta-llama/Meta-Llama-3.1-8B-Instruct'
-      : 'qwen-abliterated');
+      : hostLc.includes('abliteration') || hostLc.includes('abliterated.ai') || hostLc.includes('abliterated.io')
+        ? 'abliterated-model'
+        : 'qwen-abliterated');
 
   const fitted = fitMessagesToContext(messages, SPARK_MAX_CONTEXT, max_tokens);
   let fullContent = '';
@@ -110,6 +116,11 @@ export async function streamChatCompletion({
         const parsed = JSON.parse(errText);
         detail = parsed?.error?.message || parsed?.message || detail;
       } catch {}
+      if (response.status === 402) {
+        throw new Error(
+          `Abliteration needs credits before it will chat (${selectedModel}). Add credits, then retry.`
+        );
+      }
       throw new Error(
         `Inference endpoint (${selectedModel}) HTTP ${response.status}` +
           (detail ? ': ' + detail : '')
@@ -192,7 +203,7 @@ export async function streamChatCompletion({
       return;
     }
 
-    const errorMsg = `\n\n[⚠️ Backend Connection Error]: Unable to reach vLLM server at http://${host}:${port} (${err.message}). Please ensure the inference backend or SSH tunnel is active.`;
+    const errorMsg = `\n\n[⚠️ Backend Connection Error]: Unable to reach ${url} (${err.message}). Check API key, Cloud Mesh, and that the host is reachable.`;
     callbacks.onToken(errorMsg, false);
     callbacks.onError(new Error(errorMsg));
   }

@@ -3,6 +3,7 @@ import { streamChatCompletion } from './vllmService';
 import { extractFilesFromMarkdown } from './zipService';
 import { evaluateFactualGrounding } from './hallucinationDetector';
 import { resolveApiUrl } from './apiConfig';
+import { useMeshStore } from '../stores/useMeshStore';
 
 /**
  * Intelligent task decomposition prompt
@@ -173,7 +174,7 @@ Output STRICT JSON ONLY:
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        model: 'qwen-abliterated',
+        model: useMeshStore.getState().servingModel || 'qwen-abliterated',
         messages: [
           { role: 'system', content: triageSystemPrompt },
           { role: 'user', content: `Analyze this user prompt:\n"${trimmed.slice(0, 1000)}"` },

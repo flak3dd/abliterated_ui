@@ -56,7 +56,7 @@ export const MetricGauge: React.FC<MetricGaugeProps> = ({
 const styles = StyleSheet.create({
   card: {
     flex: 1,
-    minWidth: 150,
+    minWidth: 160,
     backgroundColor: Colors.background.surface,
     borderWidth: 1,
     borderColor: Colors.border.default,

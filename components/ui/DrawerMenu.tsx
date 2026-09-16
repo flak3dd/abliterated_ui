@@ -14,6 +14,7 @@ import * as Haptics from 'expo-haptics';
 import Colors from '../../theme/colors';
 import { useChatStore } from '../../stores/useChatStore';
 import { useMeshStore } from '../../stores/useMeshStore';
+import { matchEndpoint } from '../../services/meshRouting';
 
 interface DrawerMenuProps {
   visible: boolean;
@@ -29,8 +30,9 @@ export const DrawerMenu: React.FC<DrawerMenuProps> = ({ visible, onClose }) => {
     selectSession,
     deleteSession,
   } = useChatStore();
-  const { activeHost, activePort, candidates, meshMode, setMeshMode } = useMeshStore();
+  const { activeHost, activePort, meshMode, setMeshMode, candidates } = useMeshStore();
   const isSpark = meshMode === 'spark';
+  const activeEndpoint = matchEndpoint(candidates, activeHost, activePort);
 
   const handleCreateNew = () => {
     try {
@@ -54,8 +56,6 @@ export const DrawerMenu: React.FC<DrawerMenuProps> = ({ visible, onClose }) => {
     } catch (e) {}
     deleteSession(id);
   };
-
-  const activeEndpoint = candidates.find((c) => c.host === activeHost);
 
   return (
     <Modal
@@ -177,7 +177,7 @@ export const DrawerMenu: React.FC<DrawerMenuProps> = ({ visible, onClose }) => {
               >
                 <Zap size={11} color={isSpark ? '#10B981' : '#71717A'} />
                 <Text style={[styles.modeToggleText, isSpark && styles.modeToggleTextSpark]}>
-                  ⚡ Spark LAN
+                  Spark
                 </Text>
               </TouchableOpacity>
 
@@ -191,7 +191,7 @@ export const DrawerMenu: React.FC<DrawerMenuProps> = ({ visible, onClose }) => {
               >
                 <Globe size={11} color={!isSpark ? '#38BDF8' : '#71717A'} />
                 <Text style={[styles.modeToggleText, !isSpark && styles.modeToggleTextCloud]}>
-                  ☁️ Cloud Mesh
+                  Cloud
                 </Text>
               </TouchableOpacity>
             </View>

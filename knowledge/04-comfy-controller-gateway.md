@@ -1,35 +1,23 @@
-# ComfyUI, Spark Controller, and Gateway
+# Spark Controller and Gateway
 
-## ComfyUI graph engine (:8188)
-Host binding 0.0.0.0:8188.
-- GET / — web canvas
-- GET /system_stats — VRAM, RAM, device
-- POST /prompt — queue a workflow JSON
-- GET /queue, GET /history
-- WS /ws — node progress
-- GET /view?filename={name} — view generated asset
-Verify: curl -s http://192.168.4.103:8188/system_stats
-
-The studio ComfyUI Dolphin picker still posts to the :7860 images API, not ComfyUI /prompt, unless a separate Comfy client is used.
+ComfyUI (:8188) is **not** part of this app. Image generation uses only the Diffusers bridge on :7860.
 
 ## Spark controller (:17325)
-Runs on the Mac and via TCP bridge on Spark (port 147129 mentioned in ENDPOINTS.md).
+Runs on the Mac and via TCP bridge on Spark.
 - GET / — dashboard
 - GET /api/endpoints — service matrix
 - GET /api/status — GPU thermals, power, Docker, VRAM
-- GET /api/recipes — model recipes (qwen recipe servedName qwen-abliterated, compose docker-compose.qwen-abliterated.yml)
+- GET /api/recipes — model recipes (qwen recipe servedName qwen-abliterated)
 - POST /api/vllm — serve, stop, pull
 - POST /api/image — image bridge lifecycle
-- GET/POST /api/comfy
-- GET /api/logs?target=vllm|image|comfy
+- GET /api/logs?target=vllm|image
 Verify: curl -s http://192.168.4.103:17325/api/endpoints
 
 ## Unified gateway (:8080)
 Reverse proxy on the Mac (192.168.4.50 / 127.0.0.1).
 - Slice A :8000 qwen-abliterated
-- Slice B :8001 specialist/reasoning (deepseek-14b, minimax-heretic) when that slice is up
+- Slice B :8001 specialist/reasoning when that slice is up
 - Slice C :7860 image bridge
-- Slice D :8188 ComfyUI
 - GET /v1/models aggregates slices
 - POST /v1/chat/completions routes by model
 - POST /v1/images/generations routes to :7860

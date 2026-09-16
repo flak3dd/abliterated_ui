@@ -1,5 +1,7 @@
 import { create } from 'zustand';
 import { AspectRatioType, GeneratedImage } from '../types';
+import type { BgOption, IdWorkflowId, MediaFormat, MediaTier } from '../services/kycIdWorkflows';
+import { ID_WORKFLOWS, resolveWorkflowModel } from '../services/kycIdWorkflows';
 import { useMeshStore } from './useMeshStore';
 import { useChatStore } from './useChatStore';
 import {
@@ -8,8 +10,13 @@ import {
   loadImageModel,
   makeHistoryThumbnail,
   MODEL_SAMPLER_DEFAULTS,
+  readImageProgress,
 } from '../services/kreaService';
 import { fetchJsonWithTimeout, resolveApiUrl } from '../services/apiConfig';
+import { imageDebug } from '../services/imageDebugFeed';
+import { imageLoadable } from '../services/modelResolve';
+import { isImagePipeLoaded } from '../services/modelCatalog';
+import { useModelSession } from './useModelSession';
 
 export interface SparkGpuStats {
   name: string;
@@ -20,7 +27,7 @@ export interface SparkGpuStats {
 
 function resolveStudioImageHost(): string {
   const mesh = useMeshStore.getState();
-  const activeHost = mesh.activeHost;
+  if (mesh.activeImageHost) return mesh.activeImageHost;
   const sparkEp =
     mesh.candidates.find(
       (c) =>
@@ -31,59 +38,28 @@ function resolveStudioImageHost(): string {
       (c) =>
         c.type === 'direct_lan' || c.type === 'tailscale' || c.type === 'secondary_lan'
     );
-  if (activeHost.includes('abliterated.') || activeHost.includes('featherless.')) {
-    return sparkEp?.host || '192.168.4.103';
-  }
-  return activeHost;
+  return sparkEp?.host || '192.168.4.103';
 }
 
-let warmGen = 0;
-let warmTimer: ReturnType<typeof setTimeout> | null = null;
-let warmAbort: AbortController | null = null;
-
 function warmSelectedModel(modelId: string) {
-  if (warmTimer) clearTimeout(warmTimer);
-  warmTimer = setTimeout(() => {
-    warmTimer = null;
-    void (async () => {
-      const gen = ++warmGen;
-      warmAbort?.abort();
-      const ac = new AbortController();
-      warmAbort = ac;
-      const host = resolveStudioImageHost();
-      useStudioStore.setState({
-        warmingModelId: modelId,
-        generationStatusText: 'Loading ' + modelId + ' weights…',
-      });
-      try {
-        const result = await loadImageModel(host, 7860, modelId, ac.signal);
-        if (gen !== warmGen) return;
-        const defaults = MODEL_SAMPLER_DEFAULTS[result.model];
-        const steps = result.params?.steps || defaults?.steps;
-        const guidance = result.params?.guidance ?? defaults?.guidanceScale;
-        useStudioStore.setState((s) => ({
-          warmingModelId: null,
-          loadedModelId: result.model,
-          modelSwitchError: null,
-          generationStatusText: 'Ready · ' + result.model,
-          ...(s.selectedModel === modelId && steps
-            ? { steps, guidanceScale: guidance ?? s.guidanceScale }
-            : {}),
-          modelAvailability: {
-            ...s.modelAvailability,
-            [result.model]: { available: true, loaded: true },
-          },
-        }));
-      } catch (err: any) {
-        if (ac.signal.aborted || gen !== warmGen) return;
-        useStudioStore.setState({
-          warmingModelId: null,
-          modelSwitchError: err?.message || 'Weight load failed',
-          generationStatusText: 'Weight load failed',
-        });
-      }
-    })();
-  }, 180);
+  const avail = useStudioStore.getState().modelAvailability[modelId];
+  const loadable = imageLoadable(modelId, avail);
+  useModelSession.getState().setImageSelected(modelId, loadable.ok ? null : loadable.reason);
+  const defaults = MODEL_SAMPLER_DEFAULTS[modelId];
+  useStudioStore.setState({
+    warmingModelId: null,
+    loadedModelId:
+      useStudioStore.getState().loadedModelId === modelId
+        ? modelId
+        : useStudioStore.getState().loadedModelId,
+    modelSwitchError: loadable.ok ? null : loadable.reason,
+    generationStatusText: loadable.ok
+      ? isImagePipeLoaded(modelId, useStudioStore.getState().loadedModelId, useStudioStore.getState().modelAvailability)
+        ? 'Ready · ' + modelId
+        : 'Selected · ' + modelId + ' — load weights to generate'
+      : 'Unavailable · ' + modelId,
+    ...(defaults ? { steps: defaults.steps, guidanceScale: defaults.guidanceScale } : {}),
+  });
 }
 
 interface StudioState {
@@ -113,13 +89,22 @@ interface StudioState {
   modelAvailability: Record<string, { available: boolean; loaded: boolean }>;
   loadedModelId: string | null;
   warmingModelId: string | null;
+  loadProgress: number;
+  loadStatusText: string;
   modelSwitchError: string | null;
+  currentWorkflow: IdWorkflowId;
+  bgOption: BgOption;
+  bgSolidColor: string;
+  bgUploadUri: string | null;
+  mediaFormat: MediaFormat;
+  mediaTier: MediaTier;
 
   // Actions
   setPrompt: (prompt: string) => void;
   setNegativePrompt: (neg: string) => void;
   setSelectedModel: (model: string) => void;
   refreshImageModels: () => Promise<void>;
+  activateImageModel: (id: string) => Promise<string>;
   setAspectRatio: (ratio: AspectRatioType) => void;
   setBrushSize: (size: number) => void;
   setSteps: (steps: number) => void;
@@ -131,6 +116,12 @@ interface StudioState {
   setMaskPaths: (paths: string[]) => void;
   setCanvasSize: (size: { width: number; height: number }) => void;
   clearMask: () => void;
+  setCurrentWorkflow: (id: IdWorkflowId) => void;
+  setBgOption: (bg: BgOption) => void;
+  setBgSolidColor: (color: string) => void;
+  setBgUploadUri: (uri: string | null) => void;
+  setMediaFormat: (format: MediaFormat) => void;
+  setMediaTier: (tier: MediaTier) => void;
   generateImage: (opts?: {
     prompt?: string;
     model?: string;
@@ -139,6 +130,8 @@ interface StudioState {
     intent?: string;
     idType?: string;
     aspectRatio?: AspectRatioType;
+    extra?: Record<string, unknown>;
+    negativePrompt?: string;
   }) => Promise<GeneratedImage | null>;
   enhancePrompt: () => Promise<'llm' | 'local' | false>;
   exportToSandbox: (img?: GeneratedImage | null) => boolean;
@@ -160,7 +153,7 @@ export const useStudioStore = create<StudioState>((set, get) => ({
   isGenerating: false,
   currentGeneratedImage: null,
   steps: 24,
-  guidanceScale: 7.5,
+  guidanceScale: 3.5,
   seed: null,
   isHistoryOpen: false,
 
@@ -173,8 +166,36 @@ export const useStudioStore = create<StudioState>((set, get) => ({
   modelAvailability: {},
   loadedModelId: null,
   warmingModelId: null,
+  loadProgress: 0,
+  loadStatusText: '',
   modelSwitchError: null,
+  currentWorkflow: 'id_front',
+  bgOption: 'speckled_stone',
+  bgSolidColor: '#1a1a1e',
+  bgUploadUri: null,
+  mediaFormat: 'png',
+  mediaTier: 'standard',
 
+  setCurrentWorkflow: (id) => {
+    const wf = ID_WORKFLOWS.find((w) => w.id === id);
+    if (!wf) {
+      set({ currentWorkflow: id });
+      return;
+    }
+    const model = resolveWorkflowModel(wf, get().modelAvailability);
+    set({
+      currentWorkflow: id,
+      selectedModel: model,
+      aspectRatio: wf.defaultAspect,
+      modelSwitchError: null,
+    });
+    void warmSelectedModel(model);
+  },
+  setBgOption: (bgOption) => set({ bgOption }),
+  setBgSolidColor: (bgSolidColor) => set({ bgSolidColor }),
+  setBgUploadUri: (bgUploadUri) => set({ bgUploadUri }),
+  setMediaFormat: (mediaFormat) => set({ mediaFormat }),
+  setMediaTier: (mediaTier) => set({ mediaTier }),
   setPrompt: (prompt) => set({ prompt }),
   setNegativePrompt: (negativePrompt) => set({ negativePrompt }),
   setSelectedModel: (selectedModel) => {
@@ -182,7 +203,6 @@ export const useStudioStore = create<StudioState>((set, get) => ({
     set({
       selectedModel,
       modelSwitchError: null,
-      warmingModelId: selectedModel,
       ...(defaults ? { steps: defaults.steps, guidanceScale: defaults.guidanceScale } : {}),
     });
     void warmSelectedModel(selectedModel);
@@ -216,6 +236,98 @@ export const useStudioStore = create<StudioState>((set, get) => ({
       }
     } catch {
       set({ modelSwitchError: 'Could not list models on :7860' });
+    }
+  },
+
+  activateImageModel: async (id: string) => {
+    const host = resolveStudioImageHost();
+    const defaults = MODEL_SAMPLER_DEFAULTS[id];
+    if (get().isGenerating) {
+      throw new Error('Cannot load weights while generating');
+    }
+    if (get().warmingModelId && get().warmingModelId !== id) {
+      throw new Error('Another model is already loading');
+    }
+    if (isImagePipeLoaded(id, get().loadedModelId, get().modelAvailability)) {
+      set({
+        selectedModel: id,
+        loadProgress: 100,
+        loadStatusText: 'Already loaded · ' + id,
+        generationStatusText: 'Ready · ' + id,
+      });
+      return get().loadedModelId || id;
+    }
+    set({
+      selectedModel: id,
+      warmingModelId: id,
+      modelSwitchError: null,
+      loadProgress: 4,
+      loadStatusText: 'Connecting to :7860…',
+      generationStatusText: 'Loading weights · ' + id,
+      ...(defaults ? { steps: defaults.steps, guidanceScale: defaults.guidanceScale } : {}),
+    });
+    useModelSession.getState().setImageSelected(id);
+    let pollBusy = false;
+    const poll = setInterval(async () => {
+      if (pollBusy) return;
+      pollBusy = true;
+      try {
+        const snap = await readImageProgress(host, 7860);
+        if (!snap) return;
+        if (snap.busy || snap.status === 'loading') {
+          const pct = Math.max(4, Math.min(95, snap.progress || 8));
+          set({
+            loadProgress: pct,
+            loadStatusText:
+              snap.status === 'loading'
+                ? 'Loading weights · ' + (snap.prompt || id)
+                : snap.status + ' · ' + Math.round(pct) + '%',
+          });
+        }
+      } finally {
+        pollBusy = false;
+      }
+    }, 700);
+    try {
+      const res = await loadImageModel(host, 7860, id);
+      const served = res.model || id;
+      const avail = { ...(get().modelAvailability || {}) };
+      for (const key of Object.keys(avail)) {
+        avail[key] = { ...avail[key], loaded: false };
+      }
+      avail[id] = { available: true, loaded: true };
+      avail[served] = { available: true, loaded: true };
+      set({
+        loadedModelId: served,
+        warmingModelId: null,
+        loadProgress: 100,
+        loadStatusText: 'Loaded · ' + served,
+        generationStatusText: 'Ready · ' + served,
+        modelAvailability: avail,
+        modelSwitchError: null,
+      });
+      useMeshStore.setState({ imageLoadedModel: served });
+      useModelSession.getState().setImageServing(served, 'ready', null);
+      if (res.params?.steps) {
+        set({
+          steps: res.params.steps,
+          guidanceScale: res.params.guidance || get().guidanceScale,
+        });
+      }
+      return served;
+    } catch (error: any) {
+      const msg = error?.message || 'load failed';
+      set({
+        warmingModelId: null,
+        loadProgress: 0,
+        loadStatusText: 'Load failed',
+        modelSwitchError: msg,
+        generationStatusText: 'Load failed · ' + id,
+      });
+      useModelSession.getState().setImageServing(id, 'error', msg);
+      throw error;
+    } finally {
+      clearInterval(poll);
     }
   },
   setAspectRatio: (aspectRatio) => set({ aspectRatio }),
@@ -278,72 +390,103 @@ export const useStudioStore = create<StudioState>((set, get) => ({
     const imageHost = resolveStudioImageHost();
     const activeHost = imageHost;
 
+    const loadable = imageLoadable(runModel, get().modelAvailability[runModel]);
+    if (!loadable.ok) {
+      set({
+        generationStatusText: loadable.reason || 'Model unavailable',
+        modelSwitchError: loadable.reason,
+      });
+      return null;
+    }
+    if (get().warmingModelId) {
+      set({ generationStatusText: 'Wait for weights to finish loading' });
+      return null;
+    }
+    const loadedId = get().loadedModelId || '';
+    const alreadyLoaded = isImagePipeLoaded(runModel, loadedId, get().modelAvailability);
+    if (!alreadyLoaded) {
+      set({
+        generationStatusText: 'Load weights first · ' + runModel,
+        generationStepText: 'Weights not on GPU',
+      });
+      return null;
+    }
+    imageDebug('run_start', runPrompt.slice(0, 160) || opts?.intent || 'generate', {
+      source: opts?.intent ? 'id-studio' : 'studio',
+      model: runModel,
+      host: imageHost,
+      detail: { intent: opts?.intent, aspect: runAspect },
+    });
+    useModelSession.getState().setImageBusy(true);
     set({
       isGenerating: true,
       generationProgress: 4,
       generationStatusText: 'Connecting to DGX Spark (:7860)...',
-      generationStepText: 'Warming Blackwell GPU',
+      generationStepText: 'Starting sampler',
       generationElapsedSec: 0,
     });
 
     let pollBusy = false;
+    let gpuTick = 0;
     const pollInterval: ReturnType<typeof setInterval> = setInterval(async () => {
       if (pollBusy) return;
       pollBusy = true;
       const elapsed = Math.floor((Date.now() - startTime) / 1000);
 
       try {
-        const progressUrls = [
-          resolveApiUrl(imageHost, 7860, '/v1/progress'),
-          resolveApiUrl(imageHost, 7860, '/progress'),
-        ];
-        let pData: any = null;
-        for (const progressUrl of progressUrls) {
-          const res = await fetchJsonWithTimeout(progressUrl, 900);
-          if (res.ok && res.data) {
-            pData = res.data;
-            break;
-          }
-        }
+        const snap = await readImageProgress(imageHost, 7860);
 
-        if (pData) {
-          const rawPct = typeof pData.progress === 'number' ? pData.progress : 0;
-          const pct = rawPct <= 1 ? rawPct * 100 : rawPct;
-          const status = pData.status || 'running';
-          const reportedStep =
-            typeof pData.step === 'number'
-              ? pData.step
-              : typeof pData.current_step === 'number'
-              ? pData.current_step
-              : null;
+        if (snap && snap.busy) {
+          const pct = snap.progress;
+          const status = snap.status || 'running';
+          const totalSteps = snap.steps || steps;
+          const reportedStep = snap.step;
 
           let statusStr = 'Latent Diffusion Synthesis';
           let stepStr = '';
+          let nextPct = Math.max(0, Math.min(99, pct));
 
           if (status === 'loading') {
             statusStr = 'Loading weights into GB10 unified LPDDR5x';
-            stepStr = 'Model Pipeline Init';
+            stepStr = snap.prompt ? 'Loading ' + snap.prompt : 'Model Pipeline Init';
+            nextPct = Math.max(1, Math.min(15, pct || 8));
           } else if (status === 'encoding') {
             statusStr = 'Neural VAE Decoding & Base64 Encode';
             stepStr = 'Finalizing Pixels';
           } else if (status === 'running') {
             const currentStep =
-              reportedStep !== null
-                ? Math.max(1, Math.min(steps, reportedStep))
-                : Math.max(1, Math.min(steps, Math.round(((pct - 5) / 90) * steps)));
-            stepStr = 'Step ' + currentStep + ' of ' + steps + ' (Denoising)';
+              typeof reportedStep === 'number'
+                ? Math.max(0, Math.min(totalSteps, reportedStep))
+                : Math.max(0, Math.min(totalSteps, Math.round(((pct - 5) / 90) * totalSteps)));
+            stepStr =
+              currentStep > 0
+                ? 'Step ' + currentStep + ' of ' + totalSteps + ' (Denoising)'
+                : 'Starting sampler · ' + totalSteps + ' steps';
             statusStr = 'Latent Diffusion Sampling';
           } else if (status === 'done') {
             statusStr = 'Render Complete';
             stepStr = 'Complete';
           }
 
-          set((state) => ({
-            generationProgress: Math.max(state.generationProgress, Math.max(0, Math.min(99, pct))),
+          const prev = get();
+          const prevPct = prev.generationProgress;
+          const prevStatus = prev.generationStatusText;
+          set({
+            generationProgress: nextPct,
             generationStatusText: statusStr,
             generationStepText: stepStr,
             generationElapsedSec: elapsed,
-          }));
+          });
+          if (statusStr !== prevStatus || Math.floor(nextPct / 10) !== Math.floor(prevPct / 10)) {
+            imageDebug('progress', statusStr + ' ' + Math.round(nextPct) + '%', {
+              source: 'progress',
+              level: 'debug',
+              model: runModel,
+              host: imageHost,
+              elapsedMs: elapsed * 1000,
+              detail: { step: stepStr, busy: snap.busy },
+            });
+          }
         } else {
           set({ generationElapsedSec: elapsed });
         }
@@ -352,22 +495,33 @@ export const useStudioStore = create<StudioState>((set, get) => ({
       }
 
       try {
-        const gpuHosts = Array.from(new Set(['127.0.0.1', activeHost].filter(Boolean)));
-        for (const gpuHost of gpuHosts) {
-          const ctrlRes = await fetchJsonWithTimeout(
-            resolveApiUrl(gpuHost, 17325, '/api/status'),
-            900
-          );
-          if (ctrlRes.ok && ctrlRes.data?.gpu && !ctrlRes.data.gpu.error) {
+        gpuTick += 1;
+        if (gpuTick % 3 === 1) {
+          const urls = [
+            resolveApiUrl('127.0.0.1', 17325, '/api/status'),
+            resolveApiUrl(
+              activeHost === '127.0.0.1' || activeHost === 'localhost' ? '127.0.0.1' : activeHost,
+              17325,
+              '/api/status'
+            ),
+          ];
+          let gpu: Record<string, any> | null = null;
+          for (const url of urls) {
+            const ctrlRes = await fetchJsonWithTimeout(url, 2000);
+            if (ctrlRes.ok && ctrlRes.data?.gpu && !ctrlRes.data.gpu.error) {
+              gpu = ctrlRes.data.gpu;
+              break;
+            }
+          }
+          if (gpu) {
             set({
               sparkGpuStats: {
-                name: ctrlRes.data.gpu.name || 'NVIDIA GB10',
-                tempC: ctrlRes.data.gpu.tempC || 0,
-                gpuUtilPct: ctrlRes.data.gpu.gpuUtilPct || 0,
-                powerDrawW: ctrlRes.data.gpu.powerDrawW || 0,
+                name: gpu.name || 'NVIDIA GPU',
+                tempC: gpu.tempC || 0,
+                gpuUtilPct: gpu.gpuUtilPct || 0,
+                powerDrawW: gpu.powerDrawW || 0,
               },
             });
-            break;
           }
         }
       } catch {
@@ -375,14 +529,13 @@ export const useStudioStore = create<StudioState>((set, get) => ({
       } finally {
         pollBusy = false;
       }
-    }, 700);
+    }, 1000);
 
     try {
       const result = await generateKreaImage({
         host: imageHost,
         port: 7860,
         prompt: runPrompt || 'keep original printed data',
-        negativePrompt: negativePrompt.trim() || undefined,
         aspectRatio: runAspect,
         imageUri: runImage,
         maskData: opts?.intent ? undefined : maskPaths,
@@ -395,15 +548,20 @@ export const useStudioStore = create<StudioState>((set, get) => ({
         intent: opts?.intent,
         idImageUri: opts?.identityUri,
         idType: opts?.idType,
-        extra: opts?.intent
-          ? { mix_ratio: 0.5, timesteps: steps, cfg_scale: guidanceScale }
-          : undefined,
+        extra: {
+          ...(opts?.intent
+            ? { mix_ratio: 0.5, timesteps: steps, cfg_scale: guidanceScale }
+            : {}),
+          ...(opts?.extra || {}),
+        },
+        negativePrompt: opts?.negativePrompt !== undefined ? opts.negativePrompt : negativePrompt.trim() || undefined,
       });
 
       const thumbUri = result.isFallback ? result.uri : await makeHistoryThumbnail(result.uri);
       const historyItem = { ...result, uri: thumbUri || '' };
 
       if (result.isFallback) {
+        useModelSession.getState().setImageServing(runModel, 'error', result.error || 'generate failed');
         set((state) => ({
           isGenerating: false,
           generationProgress: 0,
@@ -415,13 +573,16 @@ export const useStudioStore = create<StudioState>((set, get) => ({
           history: [historyItem, ...state.history.slice(0, 29)],
         }));
       } else {
+        useMeshStore.setState({ imageLoadedModel: result.model });
+        useModelSession.getState().setImageServing(result.model, 'ready', null);
         set((state) => ({
           isGenerating: false,
           generationProgress: 100,
-          generationStatusText: 'Synthesis complete',
+          generationStatusText: 'Ready · ' + result.model,
           generationStepText: '100% Done',
           currentGeneratedImage: result,
           sourceImageUri: result.uri,
+          loadedModelId: result.model,
           maskPaths: [],
           isMaskEnabled: false,
           history: [historyItem, ...state.history.slice(0, 29)],
@@ -430,6 +591,7 @@ export const useStudioStore = create<StudioState>((set, get) => ({
       return result;
     } catch (error: any) {
       console.error('Image generation error in StudioStore:', error);
+      useModelSession.getState().setImageServing(runModel, 'error', error?.message || 'generate failed');
       set({
         isGenerating: false,
         generationProgress: 0,

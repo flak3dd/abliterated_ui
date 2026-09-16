@@ -1,5 +1,10 @@
 import { create } from 'zustand';
-import { MatrixPhase, MatrixSpectrum, GlyphSetType } from '../services/matrix/MatrixTypes';
+import {
+  MatrixPhase,
+  MatrixSpectrum,
+  GlyphSetType,
+  MATRIX_SPECTRUM_ORDER,
+} from '../services/matrix/MatrixTypes';
 import { matrixAudio } from '../services/matrix/MatrixAudioSynth';
 
 interface MatrixState {
@@ -17,6 +22,7 @@ interface MatrixState {
   setIsOpen: (open: boolean) => void;
   setPhase: (phase: MatrixPhase) => void;
   setSpectrum: (spectrum: MatrixSpectrum) => void;
+  cycleSpectrum: () => void;
   setGlyphSet: (glyphSet: GlyphSetType) => void;
   setSpeedMultiplier: (speed: number) => void;
   toggleAudio: () => void;
@@ -36,7 +42,7 @@ const PHASES_IN_ORDER: MatrixPhase[] = [
 export const useMatrixStore = create<MatrixState>((set, get) => ({
   isOpen: false,
   phase: 'PHASE_4_RAIN',
-  spectrum: 'rainbow',
+  spectrum: 'blue',
   glyphSet: 'abliterad',
   speedMultiplier: 1.0,
   audioEnabled: false,
@@ -62,6 +68,13 @@ export const useMatrixStore = create<MatrixState>((set, get) => ({
 
   setSpectrum: (spectrum: MatrixSpectrum) => {
     set({ spectrum });
+  },
+
+  cycleSpectrum: () => {
+    const order = MATRIX_SPECTRUM_ORDER;
+    const idx = order.indexOf(get().spectrum);
+    const next = order[(idx < 0 ? 0 : idx + 1) % order.length];
+    set({ spectrum: next });
   },
 
   setGlyphSet: (glyphSet: GlyphSetType) => {
@@ -103,6 +116,6 @@ export const useMatrixStore = create<MatrixState>((set, get) => ({
   },
 
   resetSequence: () => {
-    set({ phase: 'PHASE_4_RAIN', spectrum: 'rainbow' });
+    set({ phase: 'PHASE_4_RAIN', spectrum: 'blue' });
   },
 }));

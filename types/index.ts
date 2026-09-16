@@ -26,6 +26,7 @@ export interface Message {
   timestamp: number;
   groundingReport?: GroundingReport;
   swarmSession?: SwarmSession;
+  agentRun?: import('./agent').AgentRun;
   ragCitations?: RagCitation[];
 }
 
@@ -63,6 +64,10 @@ export interface Endpoint {
   isOnline: boolean;
   type: 'public_cloud' | 'custom' | 'direct_lan' | 'secondary_lan' | 'tailscale' | 'localhost';
   baseUrl?: string;
+  displayUrl?: string;
+  probePath?: string;
+  group?: 'local' | 'external';
+  chatRoute?: boolean;
   provider?: 'abliterated' | 'featherless' | 'custom';
   apiKey?: string;
   defaultModel?: string;
@@ -108,6 +113,26 @@ export interface GeneratedImage {
   hasMask?: boolean;
   isFallback?: boolean;
   error?: string;
+}
+
+export type ImageLibrarySource = 'studio' | 'id-studio';
+
+export interface LibraryImage {
+  id: string;
+  uri: string;
+  thumbUri: string;
+  prompt: string;
+  negativePrompt?: string;
+  aspectRatio: AspectRatioType;
+  model: string;
+  timestamp: number;
+  source: ImageLibrarySource;
+  favorite: boolean;
+  seed?: number | null;
+  steps?: number;
+  guidanceScale?: number;
+  hasMask?: boolean;
+  workflow?: string;
 }
 
 export type VoiceState = 'idle' | 'listening' | 'thinking' | 'speaking';

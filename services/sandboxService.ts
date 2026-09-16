@@ -42,7 +42,8 @@ async function postSandbox(
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
-      signal: AbortSignal.timeout(20000),
+      // Client abort must exceed sandbox-runner test timeout (60s); 120s leaves headroom for materialize+test.
+      signal: AbortSignal.timeout(120000),
     });
   } catch {
     // Daemon down / CORS / refused — expected when :17330 is not running.
@@ -313,7 +314,8 @@ export async function materializeSandbox(
 
     restoreSandboxWork(env.id, work);
     throw new Error(
-      `Sandbox materialize failed (${res?.status ?? 'offline'}) at ${getControllerBaseUrl(target)}`
+      `Sandbox materialize failed (${res?.status ?? 'offline'}) at ${getControllerBaseUrl(target)}. ` +
+        'Start the runner in abliterated_ui with: npm run sandbox'
     );
   });
 }

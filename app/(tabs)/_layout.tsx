@@ -1,12 +1,13 @@
 import React from 'react';
 import { Tabs } from 'expo-router';
 import { StyleSheet, Platform, View, useWindowDimensions } from 'react-native';
-import { MessageSquare, Sparkles, Activity, CreditCard } from 'lucide-react-native';
+import { MessageSquare, Sparkles, Radio, CreditCard } from 'lucide-react-native';
 import Colors from '../../theme/colors';
+import { isDesktopWeb } from '../../theme/layout';
 
 export default function TabsLayout() {
   const { width } = useWindowDimensions();
-  const isDesktop = Platform.OS === 'web' && width >= 768;
+  const isDesktop = isDesktopWeb(width);
 
   return (
     <Tabs
@@ -53,14 +54,20 @@ export default function TabsLayout() {
         }}
       />
       <Tabs.Screen
-        name="telemetry"
+        name="radar"
         options={{
-          title: 'Telemetry',
+          title: 'Radar',
           tabBarIcon: ({ color, focused }) => (
             <View style={focused ? styles.activeIconWrap : undefined}>
-              <Activity size={20} color={color} />
+              <Radio size={20} color={color} />
             </View>
           ),
+        }}
+      />
+      <Tabs.Screen
+        name="telemetry"
+        options={{
+          href: null,
         }}
       />
     </Tabs>

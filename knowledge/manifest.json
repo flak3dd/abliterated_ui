@@ -1,7 +1,7 @@
 {
   "name": "abliterated-spark-knowledge",
-  "version": "2026.09.14",
-  "refreshed": "2026-09-14",
+  "version": "2026.09.15",
+  "refreshed": "2026-09-15",
   "embedding": "hybrid-bm25-hash256",
   "documents": [
     "00-dataset-policy.md",

@@ -1,15 +1,14 @@
 # Cloud Mirrors and Client Providers
 
-## Abliterated cloud
-- https://api.abliterated.ai (primary)
-- https://api.abliterated.io (mirror)
-Models advertised: qwen-abliterated, gpt-oss-120b-abliterated, krea2-raw-fp8.
+## Abliteration cloud
+- https://api.abliteration.ai/v1
+- Auth: `Authorization: Bearer` or `x-api-key` (required). Local Expo web uses `http://127.0.0.1:17332/abliteration/v1` (`npm run cloud-proxy`). Production HTTPS uses `/api/cloud/abliteration/v1`.
+- Models: `abliterated-model`, `abliterated-model-large`, `abliterated-model-large-v2`
 - GET /v1/models
 - POST /v1/chat/completions (SSE)
-- POST /v1/images/generations
 
 ## Featherless
-- https://api.featherless.io
+- https://api.featherless.ai/v1
 Default client model meta-llama/Meta-Llama-3.1-8B-Instruct.
 Requires the Featherless API key stored in the mesh store. Do not print secrets.
 

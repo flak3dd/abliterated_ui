@@ -198,18 +198,7 @@ async function runPreflight() {
     results.push({ name: 'Image Bridge (:7860)', target: `${host}:7860`, status: 'STANDBY', detail: imgRes.error || 'Standby' });
   }
 
-  // Test 5: ComfyUI Server (:8188)
-  process.stdout.write(`  • [Step 5/7] Testing ComfyUI Graph Engine (:8188)... `);
-  const comfyRes = await httpGet(`http://${host}:8188/system_stats`, 2500);
-  if (comfyRes.ok) {
-    console.log(`${C.green}✔ PASS${C.reset} (${comfyRes.elapsed}ms · ComfyUI Ready)`);
-    results.push({ name: 'ComfyUI (:8188)', target: `${host}:8188`, status: 'PASS', detail: 'Graph Engine Active' });
-  } else {
-    console.log(`${C.dim}○ STANDBY${C.reset} (Port :8188 idle)`);
-    results.push({ name: 'ComfyUI (:8188)', target: `${host}:8188`, status: 'STANDBY', detail: 'Server idle / on standby' });
-  }
-
-  // Test 6: Spark Controller Daemon (:17325)
+  // Test 5: Spark Controller Daemon (:17325)
   process.stdout.write(`  • [Step 6/7] Testing Spark Controller Daemon (:17325)... `);
   let ctlRes = await httpGet(`http://${host}:17325/api/endpoints`, 2500);
   let ctlTarget = `${host}:17325`;

@@ -90,7 +90,9 @@ export const MatrixDirectorHUD: React.FC<MatrixDirectorHUDProps> = ({ onClose })
         <View style={styles.telemetryPill}>
           <Zap size={11} color={curPal.t1} />
           <Text style={styles.telemetryText}>
-            GB10: {telemetry?.gpuTemp || 41}°C • {(telemetry?.vramUsedGb ?? 0).toFixed(0)}/{telemetry?.vramTotalGb || 122}GB
+            {telemetry?.gpuTemp
+              ? `GB10: ${telemetry.gpuTemp}°C • ${(telemetry.vramUsedGb ?? 0).toFixed(0)}/${telemetry.vramTotalGb || 0}GB`
+              : 'GB10: no live telemetry'}
           </Text>
         </View>
 

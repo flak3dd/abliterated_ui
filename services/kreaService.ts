@@ -1,5 +1,6 @@
 import { AspectRatioType, GeneratedImage } from '../types';
 import { resolveApiUrl } from './apiConfig';
+import { imageDebug } from './imageDebugFeed';
 
 const HISTORY_THUMB_EDGE = 128;
 
@@ -47,8 +48,7 @@ export const MODEL_SAMPLER_DEFAULTS: Record<string, { steps: number; guidanceSca
   'z-image-turbo-nsfw-nvfp4': { steps: 8, guidanceScale: 1.0 },
   'qwen-image-2512-fp8': { steps: 30, guidanceScale: 4.0 },
   'qwen-edit-2511-fp8': { steps: 28, guidanceScale: 3.5 },
-  'comfy-dolphin': { steps: 24, guidanceScale: 3.5 },
-  'dolphin-mistral-24b': { steps: 24, guidanceScale: 3.5 },
+
   'ddb-edit': { steps: 64, guidanceScale: 5.5 },
   'xing0916/DDB_Edit': { steps: 64, guidanceScale: 5.5 },
   'seedvr2-7b': { steps: 20, guidanceScale: 5.0 },
@@ -69,8 +69,18 @@ export async function listImageModels(
   port = 7860
 ): Promise<{ models: BridgeImageModel[]; loaded: string[] }> {
   const url = resolveApiUrl(host, port, '/v1/models');
+  const t0 = Date.now();
   const res = await fetch(url, { signal: AbortSignal.timeout(4000) });
-  if (!res.ok) throw new Error(`models ${res.status}`);
+  if (!res.ok) {
+    imageDebug('models_fail', 'GET /v1/models HTTP ' + res.status, {
+      source: 'bridge',
+      level: 'error',
+      host,
+      httpStatus: res.status,
+      elapsedMs: Date.now() - t0,
+    });
+    throw new Error(`models ${res.status}`);
+  }
   const data = await res.json();
   const rows = Array.isArray(data?.data) ? data.data : [];
   const models: BridgeImageModel[] = rows.map((row: any) => ({
@@ -81,30 +91,187 @@ export async function listImageModels(
     guidance: typeof row.guidance === 'number' ? row.guidance : undefined,
     pipelineClass: row.pipelineClass,
   })).filter((m: BridgeImageModel) => m.id);
+  const loaded = Array.isArray(data?.loaded)
+    ? data.loaded.map(String)
+    : models.filter((m) => m.loaded).map((m) => m.id);
+  imageDebug('models_ok', 'listed ' + models.length + ' models', {
+    source: 'bridge',
+    host,
+    elapsedMs: Date.now() - t0,
+    detail: { available: models.filter((m) => m.available).map((m) => m.id), loaded },
+  });
+  return { models, loaded };
+}
+
+const IMAGE_BRIDGE_PORT = 7860;
+const BUSY_PROGRESS = new Set(['running', 'loading', 'encoding']);
+
+export type ImageProgress = {
+  progress: number;
+  status: string;
+  prompt?: string;
+  busy: boolean;
+  step?: number;
+  steps?: number;
+};
+
+function normalizeProgress(data: any): ImageProgress {
+  const status = String(data?.status || '').trim().toLowerCase() || 'idle';
+  const rawPct = typeof data?.progress === 'number' ? data.progress : 0;
+  const progress = rawPct <= 1 && rawPct > 0 ? rawPct * 100 : rawPct;
+  const busyFlag = data?.busy === true;
+  const busy = busyFlag || BUSY_PROGRESS.has(status);
   return {
-    models,
-    loaded: Array.isArray(data?.loaded) ? data.loaded.map(String) : models.filter((m) => m.loaded).map((m) => m.id),
+    progress: Number.isFinite(progress) ? progress : 0,
+    status: busy ? status : status || 'idle',
+    prompt: typeof data?.prompt === 'string' ? data.prompt : undefined,
+    busy,
+    step: typeof data?.step === 'number' ? data.step : undefined,
+    steps: typeof data?.steps === 'number' ? data.steps : undefined,
   };
+}
+
+export async function readImageProgress(host: string, port: number): Promise<ImageProgress | null> {
+  try {
+    const res = await fetch(resolveApiUrl(host, port, '/v1/progress'), {
+      signal: AbortSignal.timeout(2000),
+    });
+    if (!res.ok) return null;
+    return normalizeProgress(await res.json());
+  } catch {
+    return null;
+  }
+}
+
+/** Wait only while the bridge reports an in-flight job. Empty/unreachable progress is not busy. */
+async function waitForBridgeIdle(host: string, port: number, timeoutMs = 30000): Promise<void> {
+  const started = Date.now();
+  let lastKey = '';
+  let lastChange = Date.now();
+  let lastLog = 0;
+  const STALL_MS = 25000;
+  while (Date.now() - started < timeoutMs) {
+    const snap = await readImageProgress(host, port);
+    if (!snap || !snap.busy) return;
+    const key = snap.status + '|' + Math.round(snap.progress) + '|' + (snap.prompt || '');
+    if (key !== lastKey) {
+      lastKey = key;
+      lastChange = Date.now();
+    } else if (Date.now() - lastChange >= STALL_MS) {
+      const msg =
+        'Weight load stalled at ' +
+        Math.round(snap.progress) +
+        '% (' +
+        (snap.prompt || snap.status) +
+        '). GPU may be full — retry Load weights.';
+      imageDebug('gen_stall', msg, { source: 'krea', level: 'error', host });
+      throw new Error(msg);
+    }
+    if (Date.now() - lastLog >= 8000) {
+      lastLog = Date.now();
+      imageDebug(
+        'gen_wait',
+        'bridge busy (' + snap.status + ' ' + Math.round(snap.progress) + '%) — waiting',
+        { source: 'krea', level: 'warn', host }
+      );
+    }
+    await new Promise((r) => setTimeout(r, 1500));
+  }
+}
+
+export async function pingImageBridge(host: string, port = IMAGE_BRIDGE_PORT, timeoutMs = 2500): Promise<boolean> {
+  const url = resolveApiUrl(host, port, '/health');
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const res = await fetch(url, { signal: controller.signal });
+    imageDebug(res.ok ? 'health_ok' : 'health_fail', 'GET /health HTTP ' + res.status, {
+      source: 'bridge',
+      level: res.ok ? 'info' : 'warn',
+      host,
+      httpStatus: res.status,
+    });
+    return res.ok;
+  } catch (e: any) {
+    imageDebug('health_slow', e?.message || 'GET /health timed out', {
+      source: 'bridge',
+      level: 'warn',
+      host,
+    });
+    return false;
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 export async function loadImageModel(
   host: string,
-  port = 7860,
+  port = IMAGE_BRIDGE_PORT,
   model: string,
   signal?: AbortSignal
-): Promise<{ model: string; params?: { steps?: number; guidance?: number } }> {
+): Promise<{ model: string; params?: { steps?: number; guidance?: number }; skipped?: boolean }> {
+  imageDebug('load_start', 'POST /v1/models/load', { source: 'bridge', host, model });
+  if (!(await pingImageBridge(host, port))) {
+    imageDebug('load_skip', 'health slow — still attempting load', {
+      source: 'bridge',
+      level: 'warn',
+      host,
+      model,
+    });
+  }
   const url = resolveApiUrl(host, port, '/v1/models/load');
-  const res = await fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ model }),
-    signal,
-  });
+  const tLoad = Date.now();
+  await waitForBridgeIdle(host, port, 180000);
+  let res: Response | null = null;
+  for (let attempt = 0; attempt < 6; attempt++) {
+    res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model }),
+      signal: signal || AbortSignal.timeout(10 * 60 * 1000),
+    });
+    if (res.status !== 429) break;
+    imageDebug('load_busy', 'HTTP 429 — wait then retry load ' + (attempt + 1), {
+      source: 'bridge',
+      level: 'warn',
+      host,
+      model,
+      httpStatus: 429,
+    });
+    await waitForBridgeIdle(host, port, 90000);
+    await new Promise((r) => setTimeout(r, 800));
+  }
+  if (!res) throw new Error('load failed');
+  if (res.status === 404) {
+    imageDebug('load_skip', 'no /v1/models/load on this bridge — generate will load the pipe', {
+      source: 'bridge',
+      level: 'warn',
+      host,
+      model,
+      httpStatus: 404,
+      elapsedMs: Date.now() - tLoad,
+    });
+    return { model, skipped: true };
+  }
   if (!res.ok) {
     const text = await res.text().catch(() => '');
+    imageDebug('load_fail', text || 'HTTP ' + res.status, {
+      source: 'bridge',
+      level: 'error',
+      host,
+      model,
+      httpStatus: res.status,
+      elapsedMs: Date.now() - tLoad,
+    });
     throw new Error(text || `load ${res.status}`);
   }
   const data = await res.json();
+  imageDebug('load_ok', String(data.model || model), {
+    source: 'bridge',
+    host,
+    model: String(data.model || model),
+    elapsedMs: Date.now() - tLoad,
+  });
   return {
     model: String(data.model || model),
     params: data.params
@@ -295,7 +462,7 @@ function extractGeneratedUrl(data: any): string | null {
 
 export async function generateKreaImage({
   host,
-  port = 7860,
+  port = IMAGE_BRIDGE_PORT,
   prompt,
   negativePrompt,
   aspectRatio,
@@ -305,20 +472,38 @@ export async function generateKreaImage({
   brushSize = 28,
   model = 'krea2-raw-fp8',
   steps = 24,
-  guidanceScale = 7.5,
+  guidanceScale = 3.5,
   seed = null,
   intent,
   idImageUri,
   idType,
   extra,
 }: GenerateImageParams): Promise<GeneratedImage> {
+  if (port !== IMAGE_BRIDGE_PORT) {
+    console.warn('[kreaService] Forcing image bridge port 7860 (got ' + port + ')');
+    port = IMAGE_BRIDGE_PORT;
+  }
   const url = resolveApiUrl(host, port, '/v1/images/generations');
-  const size = IMAGE_SIZE_MAP[aspectRatio] || IMAGE_SIZE_MAP['1:1'];
-  const { width, height } = size;
   const hasMaskInput = Boolean(
     (typeof maskData === 'string' && maskData.length > 0) ||
       (Array.isArray(maskData) && maskData.length > 0)
   );
+  imageDebug('gen_start', (prompt || '').slice(0, 160), {
+    source: 'krea',
+    host,
+    model,
+    detail: { steps, guidanceScale, aspectRatio, hasImage: Boolean(imageUri), hasMask: hasMaskInput },
+  });
+  if (!(await pingImageBridge(host, port))) {
+    imageDebug('health_slow', 'GET /health slow — POSTing generate without idle wait', {
+      source: 'krea',
+      level: 'warn',
+      host,
+      model,
+    });
+  }
+  const size = IMAGE_SIZE_MAP[aspectRatio] || IMAGE_SIZE_MAP['1:1'];
+  const { width, height } = size;
 
   let encodedImage: string | undefined;
   if (imageUri) {
@@ -365,7 +550,19 @@ export async function generateKreaImage({
   }
 
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 180000);
+  const startedAt = Date.now();
+  const HARD_CAP_MS = 12 * 60 * 1000;
+  const SOFT_IDLE_MS = 180000;
+  const watchdog = setInterval(async () => {
+    const elapsed = Date.now() - startedAt;
+    if (elapsed >= HARD_CAP_MS) {
+      controller.abort();
+      return;
+    }
+    const snap = await readImageProgress(host, port);
+    if (snap?.busy) return;
+    if (elapsed >= SOFT_IDLE_MS) controller.abort();
+  }, 3000);
   let errorMsg: string | undefined;
 
   try {
@@ -381,37 +578,60 @@ export async function generateKreaImage({
         ')'
     );
 
-    const response = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        model,
-        prompt,
-        negative_prompt: negativePrompt || undefined,
-        size: width + 'x' + height,
-        width,
-        height,
-        num_inference_steps: steps,
-        guidance_scale: guidanceScale,
-        seed: seed !== null ? seed : undefined,
-        response_format: 'b64_json',
-        image: encodedImage || undefined,
-        mask: encodedMask || undefined,
-        intent: intent || undefined,
-        id_image: encodedIdImage || undefined,
-        extra: {
-          ...(extra || {}),
-          ...(idType ? { id_type: idType } : {}),
-        },
-      }),
-      signal: controller.signal,
+    const payload = JSON.stringify({
+      model,
+      prompt,
+      negative_prompt: negativePrompt || undefined,
+      size: width + 'x' + height,
+      width,
+      height,
+      steps,
+      num_inference_steps: steps,
+      guidance_scale: guidanceScale,
+      seed: seed !== null ? seed : undefined,
+      response_format: 'b64_json',
+      image: encodedImage || undefined,
+      mask: encodedMask || undefined,
+      intent: intent || undefined,
+      id_image: encodedIdImage || undefined,
+      extra: {
+        ...(extra || {}),
+        ...(idType ? { id_type: idType } : {}),
+      },
     });
 
-    if (response.ok) {
+    await waitForBridgeIdle(host, port, 120000);
+    let response: Response | null = null;
+    for (let attempt = 0; attempt < 8; attempt++) {
+      response = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: payload,
+        signal: controller.signal,
+      });
+      if (response.status !== 429) break;
+      imageDebug('gen_busy', 'HTTP 429 already running — wait then retry ' + (attempt + 1), {
+        source: 'krea',
+        level: 'warn',
+        host,
+        model,
+        httpStatus: 429,
+      });
+      await waitForBridgeIdle(host, port, 90000);
+      await new Promise((r) => setTimeout(r, 1500));
+    }
+
+    if (response && response.ok) {
       const data = await response.json();
       console.log('[kreaService] Received response from Spark (model: ' + (data.model || model) + ')');
       const generatedUrl = extractGeneratedUrl(data);
       if (generatedUrl) {
+        imageDebug('gen_ok', 'got image ' + (data.model || model), {
+          source: 'krea',
+          host,
+          model: data.model || model,
+          httpStatus: response.status,
+        });
         return {
           id: 'img_' + Date.now(),
           uri: generatedUrl,
@@ -426,19 +646,33 @@ export async function generateKreaImage({
       errorMsg = 'Spark returned HTTP 200 but no image payload';
       console.warn('[kreaService] ' + errorMsg + ':', Object.keys(data || {}));
     } else {
-      const errText = await response.text().catch(() => '');
-      errorMsg = 'Spark Image Bridge HTTP ' + response.status + (errText ? ': ' + errText.slice(0, 120) : '');
+      const errText = response ? await response.text().catch(() => '') : '';
+      errorMsg =
+        'Spark Image Bridge HTTP ' +
+        (response ? response.status : 0) +
+        (errText ? ': ' + errText.slice(0, 120) : '');
+      imageDebug('gen_fail', errorMsg, {
+        source: 'krea',
+        level: 'error',
+        host,
+        model,
+        httpStatus: response ? response.status : 0,
+      });
       console.warn('[kreaService] ' + errorMsg);
     }
   } catch (e: any) {
     if (e?.name === 'AbortError') {
-      errorMsg = 'Image generation timed out after 180 seconds';
+      const secs = Math.round((Date.now() - startedAt) / 1000);
+      errorMsg =
+        secs >= Math.round(HARD_CAP_MS / 1000)
+          ? 'Image generation timed out after ' + secs + ' seconds'
+          : 'Image generation stalled after ' + secs + ' seconds (bridge not busy)';
     } else {
       errorMsg = e?.message || 'Network/generation error';
     }
     console.warn('[kreaService] ' + errorMsg);
   } finally {
-    clearTimeout(timeout);
+    clearInterval(watchdog);
   }
 
   return createSyntheticImage(prompt, aspectRatio, hasMaskInput, model, errorMsg);

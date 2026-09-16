@@ -8,9 +8,9 @@ Comprehensive reference guide for all microservices, network interfaces, REST ro
 
 | Route Name | Host IP / Address | Target Machine | Protocol | Role |
 |---|---|---|---|---|
-| **Abliterated Cloud AI (Primary)** | `api.abliterated.ai` | Sovereign Cloud Mesh | HTTPS (:443) | Primary sovereign cloud inference cluster (~15–35ms) |
+| **Abliterated Cloud AI (Primary)** | `api.abliteration.ai` | Sovereign Cloud Mesh | HTTPS `:443` `/v1/` | Primary sovereign cloud inference (`https://api.abliteration.ai/v1/`) |
 | **Abliterated Cloud IO (Mirror)** | `api.abliterated.io` | Sovereign Cloud Cluster | HTTPS (:443) | High-throughput sovereign inference & image bridge (~15–35ms) |
-| **Featherless AI Mesh** | `api.featherless.io` | Serverless Open-Weight Mesh | HTTPS (:443) | Global uncensored open-weight model router (~30–60ms) |
+| **Featherless AI Mesh** | `api.featherless.ai` | Serverless Open-Weight Mesh | HTTPS `:443` `/v1/` | Global uncensored open-weight model router (`https://api.featherless.ai/v1/`) |
 | **Direct LAN (Primary)** | `192.168.4.103` | NVIDIA DGX Spark (GB10) | Ethernet / Wi-Fi | Lowest latency route for home/studio devices (~10–13ms) |
 | **Secondary LAN** | `192.168.4.101` | NVIDIA DGX Spark (NIC 2) | Ethernet | Redundant / secondary interface (~20–60ms) |
 | **Tailscale VPN** | `100.94.45.77` (`gx10-d0e7`) | NVIDIA DGX Spark | WireGuard / TS | Secure remote mesh access outside the local network (~10–25ms) |
@@ -22,12 +22,13 @@ Comprehensive reference guide for all microservices, network interfaces, REST ro
 
 ## 2. Quick-Reference Matrix for Cloud, Mobile & Desktop
 
-| Component | Port | Cloud HTTPS URL (`api.abliterated.ai`) | Direct LAN URL (Phone Wi-Fi) | Tailscale URL (Remote Phone) | Localhost URL (Mac) |
+| Component | Port | Cloud HTTP URL (`api.abliteration.ai`) | Direct LAN URL (Phone Wi-Fi) | Tailscale URL (Remote Phone) | Localhost URL (Mac) |
 |---|---|---|---|---|---|
-| **vLLM Inference API** | `:443` / `:8000` | `https://api.abliterated.ai/v1/models` | `http://192.168.4.103:8000/v1/models` | `http://100.94.45.77:8000/v1/models` | `http://127.0.0.1:8000/v1/models` |
-| **Chat Streaming** | `:443` / `:8000` | `https://api.abliterated.ai/v1/chat/completions` | `http://192.168.4.103:8000/v1/chat/completions` | `http://100.94.45.77:8000/v1/chat/completions` | `http://127.0.0.1:8000/v1/chat/completions` |
-| **Image Bridge** | `:443` / `:7860` | `https://api.abliterated.ai/v1/images/generations` | `http://192.168.4.103:7860/health` | `http://100.94.45.77:7860/health` | `http://127.0.0.1:7860/health` |
-| **ComfyUI Cluster** | `:8188` | — | `http://192.168.4.103:8188/` | `http://100.94.45.77:8188/` | `http://127.0.0.1:8188/` |
+| **vLLM Inference API** | `:443` / `:8000` | `https://api.abliteration.ai/v1/models` | `http://192.168.4.103:8000/v1/models` | `http://100.94.45.77:8000/v1/models` | `http://127.0.0.1:8000/v1/models` |
+| **Chat Streaming** | `:443` / `:8000` | `https://api.abliteration.ai/v1/chat/completions` | `http://192.168.4.103:8000/v1/chat/completions` | `http://100.94.45.77:8000/v1/chat/completions` | `http://127.0.0.1:8000/v1/chat/completions` |
+| **Image Bridge** | `:443` / `:7860` | `https://api.abliteration.ai/v1/images/generations` | `http://192.168.4.103:7860/health` | `http://100.94.45.77:7860/health` | `http://127.0.0.1:7860/health` |
+| **LayoutLMv3 Document AI** | `:7870` | — | `http://192.168.4.103:7870/health` | `http://100.94.45.77:7870/health` | `http://127.0.0.1:7870/health` |
+
 | **Spark Controller** | `:17325` | — | `http://192.168.4.103:17325/` | `http://100.94.45.77:17325/` | `http://127.0.0.1:17325/` |
 | **Gateway Router** | `:8080` | — | `http://192.168.4.50:8080/v1/models` | `http://100.120.81.22:8080/v1/models` | `http://127.0.0.1:8080/v1/models` |
 | **Public Web App** | `:443` / `:8081` | `https://web.abliterated.app` | `http://192.168.4.50:8081/` | `http://100.120.81.22:8081/` | `http://localhost:8081/` |
@@ -106,26 +107,27 @@ curl -s http://192.168.4.103:7860/health
 
 ---
 
-### 3.4 ComfyUI Graph Engine (`:8188`)
-Modular generative AI workspace supporting complex node graphs, ControlNet, inpainting, and custom workflows.
 
-- **Host Binding**: `0.0.0.0:8188`
+### 3.4 LayoutLMv3 Document AI (`:7870`)
+Document layout / OCR-zone encoder for ID Studio gates (not a Diffusers generator).
 
-#### Endpoints & Protocols
-- **`GET /`**: Interactive ComfyUI Web Canvas.
-- **`GET /system_stats`**: Real-time GPU VRAM, system RAM, and device telemetry.
-- **`POST /prompt`**: Submits a workflow JSON graph to the execution queue.
-- **`GET /queue`**: Current execution queue state.
-- **`GET /history`**: Generation history and generated image file references.
-- **`WS /ws`**: Live WebSocket stream for node progress and intermediate latents.
-- **`GET /view?filename={name}`**: Downloads or views a generated image asset.
+- **Host Binding**: `0.0.0.0:7870` on DGX Spark
+- **Model**: `microsoft/layoutlmv3-base` (UI id `layoutlmv3-base`)
+- **Load pattern**:
+  ```python
+  from transformers import AutoModel
+  model = AutoModel.from_pretrained("microsoft/layoutlmv3-base", device_map="auto")
+  ```
+- **`GET /health`**: Service liveness + loaded model name.
+- **`GET /v1/models`**: Lists `layoutlmv3-base` availability / loaded flag.
+- **`POST /v1/models/load`**: Warm weights (`{ "model": "layoutlmv3-base" }`).
+- **`POST /v1/layout/analyze`**: Body `{ "model", "image" (data URL or base64), "workflow"? }` → `{ ok, score, regions, notes, model }`.
+- **Client**: `services/layoutLmv3Service.ts` · ID Studio OCR gate via `runKycGateAsync`.
+- **Runtime script**: `python scripts/layoutlmv3_runtime.py` (or uvicorn on port 7870).
 
-#### Verification Command
 ```bash
-curl -s http://192.168.4.103:8188/system_stats
+curl -s http://192.168.4.103:7870/health
 ```
-
----
 
 ### 3.5 Spark Controller Daemon (`:17325`)
 Central supervisor daemon and management dashboard for the DGX Spark environment.
@@ -139,8 +141,7 @@ Central supervisor daemon and management dashboard for the DGX Spark environment
 - **`GET /api/recipes`**: Served model recipes and configuration presets.
 - **`POST /api/vllm`**: Lifecycle actions (`serve`, `stop`, `pull`).
 - **`POST /api/image`**: Diffusers image bridge lifecycle and model switching.
-- **`GET /api/comfy` & `POST /api/comfy`**: ComfyUI status and service controls.
-- **`GET /api/logs?target=vllm|image|comfy`**: Real-time streaming log viewer.
+- **`GET /api/logs?target=vllm|image`**: Real-time streaming log viewer.
 
 #### Verification Command
 ```bash
@@ -155,7 +156,6 @@ Dynamic reverse proxy providing a single entry point for all model slices with a
 - **Slice A (`:8000`)**: Primary Flagship LLM (`qwen-abliterated`)
 - **Slice B (`:8001`)**: Specialist / Reasoning LLM (`deepseek-14b`, `minimax-heretic`)
 - **Slice C (`:7860`)**: Diffusers Image Bridge (`krea2-raw-fp8`, `flux2-klein-9b`)
-- **Slice D (`:8188`)**: ComfyUI Graph Engine Cluster
 
 #### REST Endpoints
 - **`GET /v1/models`**: Aggregates all model slices into a single unified catalog.
@@ -187,10 +187,10 @@ curl -s -I http://localhost:8081
 
 ---
 
-### 3.8 Abliterated Cloud AI Endpoints (`api.abliterated.ai` & `api.abliterated.io`)
-High-throughput sovereign inference cluster serving uncensored open weights over encrypted HTTPS.
+### 3.8 Abliterated Cloud AI Endpoints (`api.abliteration.ai` & `api.abliterated.io`)
+High-throughput sovereign inference cluster serving uncensored open weights.
 
-- **Primary URL**: `https://api.abliterated.ai`
+- **Primary URL**: `https://api.abliteration.ai/v1/`
 - **Mirror URL**: `https://api.abliterated.io`
 - **Supported Models**:
   - `qwen-abliterated` (Default sovereign text generation)
@@ -198,17 +198,17 @@ High-throughput sovereign inference cluster serving uncensored open weights over
   - `krea2-raw-fp8` (Generative diffusion & inpainting)
 
 #### REST Endpoints
-- **`GET https://api.abliterated.ai/v1/models`**: List active loaded models and availability.
-- **`POST https://api.abliterated.ai/v1/chat/completions`**: Server-Sent Events (SSE) streaming chat completions.
-- **`POST https://api.abliterated.ai/v1/images/generations`**: High-resolution latent diffusion and inpaint generation.
+- **`GET https://api.abliteration.ai/v1/models`**: List active loaded models and availability.
+- **`POST https://api.abliteration.ai/v1/chat/completions`**: Server-Sent Events (SSE) streaming chat completions.
+- **`POST https://api.abliteration.ai/v1/images/generations`**: High-resolution latent diffusion and inpaint generation.
 
 #### Verification Commands
 ```bash
 # Check model availability
-curl -s https://api.abliterated.ai/v1/models
+curl -s https://api.abliteration.ai/v1/models
 
 # Test streaming completion
-curl -N -s https://api.abliterated.ai/v1/chat/completions \
+curl -N -s https://api.abliteration.ai/v1/chat/completions \
   -H "Content-Type: application/json" \
   -d '{"model": "qwen-abliterated", "messages": [{"role": "user", "content": "Ping"}], "stream": true}'
 ```
@@ -223,12 +223,14 @@ You can audit or restart these services at any time using the bundled project sc
 # Run full 8-point automated preflight diagnostic
 npm run preflight
 
-# Bootstrap and verify all standby services (:7860, :8188, :17325)
+# Bootstrap and verify all standby services (:7860, :17325)
 npm run start-services
 
 # Test and verify local & remote Controller listeners
 npm run test-controller
 
-# Launch interactive autonomous Spark agent
+# Launch interactive autonomous Spark agent (CLI)
 npm run agent
+
+# In-chat BUILD agent: dock toggle Agent:BUILD (Spark mesh + sandbox). Unlimited budgets; git/gh + github tool. Unit: npm run test-agent
 ```

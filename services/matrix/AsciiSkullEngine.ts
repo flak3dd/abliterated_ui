@@ -11,56 +11,57 @@ export interface SkullCell {
   y: number;
 }
 
-// Compact ASCII Skull Matrix (54 x 20) for mobile & small screens
+// Compact ASCII Skull Matrix (54 x 22) for mobile & small screens
 const SKULL_COMPACT: string[] = [
   "                 .ed\"\"\"\"\"\"\"\"\"\"\"\"\"\"be.                  ",
-  "               -\"                    \"-                ",
-  "             .\"                        \".              ",
-  "            /                            \\             ",
-  "           :                              :            ",
-  "           :       .::..      ..::.       :            ",
-  "           :     .:::::::.  .:::::::.     :            ",
-  "           :     ':::::::'  ':::::::'     :            ",
-  "           :       ':::\"      \":::'       :            ",
-  "           :            .::.              :            ",
-  "           :          .::::::.            :            ",
-  "            \\        '::.  .::'          /             ",
-  "             `.        '::::'          .'              ",
-  "               \"-    ..::::::..      -\"                ",
-  "                 \". :::::::::::: .\"                    ",
-  "                   \\  ||||||||  /                      ",
-  "                    `.||||||||.'                       ",
+  "               -\"    .--.    .--.    \"-                ",
+  "             .\"    .'    '. '    '.    \".              ",
+  "            /     :  .::.  : .::.  :     \\             ",
+  "           :      : :::::  : ::::: :      :            ",
+  "           :      : ':::'  : ':::' :      :            ",
+  "           :       '.    .' '.    .'      :            ",
+  "           :         '--'     '--'        :            ",
+  "           :            .::::.            :            ",
+  "           :          .::'  '::.          :            ",
+  "           :         '::.    .::'         :            ",
+  "            \\         '::.  .::'         /             ",
+  "             `.         '::::'         .'              ",
+  "               \"-     ..::::::..     -\"                ",
+  "                 \".  ::::::::::::  .\"                  ",
+  "                   \\  |||==||||  /                     ",
+  "                    `.|| || |||.'                      ",
+  "                     '| |||| |'                       ",
   "                      \"\"\"\"\"\"\"\"                         ",
 ];
 
-// Standard ASCII Skull Matrix (76 x 26) for desktop & large displays
+// Standard ASCII Skull Matrix (76 x 28) for desktop & large displays
 const SKULL_STANDARD: string[] = [
   "                      .ed\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"be.                       ",
-  "                   .-\"                                \"-.                    ",
-  "                 .\"                                      \".                  ",
-  "               .\"   .ed\"\"\"\"\"\"\"\"\"be.      .ed\"\"\"\"\"\"\"\"\"be.   \".                ",
-  "              /   .\"              \".    .\"              \".   \\               ",
-  "             /   /                  \\  /                  \\   \\              ",
-  "            :   :                    ::                    :   :             ",
-  "            :   :     .::::::::.     ::     .::::::::.     :   :             ",
-  "            :   :    .::::::::::.    ::    .::::::::::.    :   :             ",
-  "            :   :    '::::::::::'    ::    '::::::::::'    :   :             ",
-  "            :    \\    '::::::::'     ::     '::::::::'    /    :             ",
-  "             \\    \".     ':::'       /\\       ':::'     .\"    /              ",
-  "              \\     \"-..         ..-\"  \"-..         ..-\"     /               ",
-  "               `.       \"\"\"\"\"\"\"\"\"          \"\"\"\"\"\"\"\"\"       .'                ",
-  "                 `.                                      .'                  ",
-  "                   \"-..                              ..-\"                    ",
-  "                       \"-..       ..-..       ..-\"                           ",
-  "                           \"-.. .\"     \". ..-\"                               ",
-  "                               :  .:::.  :                                   ",
-  "                               : :::::: :                                    ",
-  "                                \\ ':::' /                                    ",
-  "                                 \\     /                                     ",
-  "                                  |===|                                      ",
-  "                                 / ||| \\                                     ",
-  "                                :  |||  :                                    ",
-  "                                 \"\"\"\"\"\"\"                                     ",
+  "                   .-\"          .--.    .--.            \"-.                    ",
+  "                 .\"           .'    '. '    '.             \".                  ",
+  "               .\"    .ed\"\"\"\"\"\"\"\"\"be.      .ed\"\"\"\"\"\"\"\"\"be.    \".                ",
+  "              /    .\"   .::::::::.  \".    .\"  .::::::::.  \".   \\               ",
+  "             /    /    .::::::::::.  \\  /    .::::::::::.  \\   \\              ",
+  "            :    :     '::::::::::'   ::     '::::::::::'   :   :             ",
+  "            :    :       '::::::'     ::       '::::::'     :   :             ",
+  "            :    :         '::'       ::         '::'       :   :             ",
+  "            :     \\         ..        /\\         ..        /    :             ",
+  "             \\     \".     '::::'    .'  '.     '::::'    .'    /              ",
+  "              \\      \"-..         ..-\"  \"-..         ..-\"     /               ",
+  "               `.        \"\"\"\"\"\"\"\"\"    ..    \"\"\"\"\"\"\"\"\"       .'                ",
+  "                 `.                 .::::.                 .'                  ",
+  "                   \"-..           .::'  '::.           ..-\"                    ",
+  "                       \"-..      '::.  .::'      ..-\"                         ",
+  "                           \"-..    '::::'    ..-\"                             ",
+  "                               :  .::::::.  :                                 ",
+  "                               : :::::::::: :                                 ",
+  "                                \\ '::::::' /                                  ",
+  "                                 \\  '::'  /                                   ",
+  "                                  |======|                                    ",
+  "                                 / || || \\                                   ",
+  "                                :  |||||  :                                   ",
+  "                                :  || ||  :                                   ",
+  "                                 \"\"\"\"\"\"\"\"                                     ",
 ];
 
 export const ABLITERATED_LOGO_ASCII: string[] = [
@@ -77,6 +78,8 @@ export interface MaskGrid {
   cols: number;
   occupied: boolean[][];
   occupiedCols: boolean[];
+  chars: string[][];
+  edge: boolean[][];
 }
 
 export class AsciiSkullEngine {
@@ -85,6 +88,14 @@ export class AsciiSkullEngine {
    */
   public static getSkullLines(widthPx: number): string[] {
     return widthPx < 640 ? SKULL_COMPACT : SKULL_STANDARD;
+  }
+
+  public static charTier(ch: string): 1 | 2 | 3 | 4 {
+    if (!ch || ch === ' ') return 1;
+    if ('@#%█'.includes(ch)) return 4;
+    if ('=*+▓'.includes(ch)) return 3;
+    if (':.|▒/\\'.includes(ch)) return 2;
+    return 1;
   }
 
   /** Canonical occupancy grid copied from components/chat/matrix.sh */
@@ -96,18 +107,38 @@ export class AsciiSkullEngine {
       if (line.length > cols) cols = line.length;
     }
     const occupied: boolean[][] = [];
+    const chars: string[][] = [];
     const occupiedCols = new Array(cols).fill(false);
     for (let r = 0; r < rows; r++) {
       const line = src[r] || '';
       const row: boolean[] = new Array(cols);
+      const rowChars: string[] = new Array(cols);
       for (let c = 0; c < cols; c++) {
-        const on = line[c] !== undefined && line[c] !== ' ';
-        row[c] = on;
-        if (on) occupiedCols[c] = true;
+        const ch = line[c] && line[c] !== ' ' ? line[c] : '';
+        row[c] = ch !== '';
+        rowChars[c] = ch;
+        if (ch) occupiedCols[c] = true;
       }
       occupied.push(row);
+      chars.push(rowChars);
     }
-    return { rows, cols, occupied, occupiedCols };
+    const edge: boolean[][] = [];
+    for (let r = 0; r < rows; r++) {
+      const row: boolean[] = new Array(cols);
+      for (let c = 0; c < cols; c++) {
+        if (!occupied[r][c]) {
+          row[c] = false;
+          continue;
+        }
+        row[c] =
+          !occupied[r - 1]?.[c] ||
+          !occupied[r + 1]?.[c] ||
+          !occupied[r][c - 1] ||
+          !occupied[r][c + 1];
+      }
+      edge.push(row);
+    }
+    return { rows, cols, occupied, occupiedCols, chars, edge };
   }
 
   /**
@@ -124,14 +155,7 @@ export class AsciiSkullEngine {
       for (let c = 0; c < line.length; c++) {
         const ch = line[c];
         if (ch && ch !== ' ') {
-          let tier: 1 | 2 | 3 | 4 = 2;
-          if (ch === ':' || ch === '.' || ch === "'") {
-            tier = 3;
-          } else if (ch === '|' || ch === '=' || ch === '#') {
-            tier = 4;
-          } else if (ch === '"' || ch === '-' || ch === '`') {
-            tier = 1;
-          }
+          const tier = AsciiSkullEngine.charTier(ch);
           cells.push({
             char: ch,
             tier,

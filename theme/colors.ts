@@ -14,6 +14,9 @@ export const Colors = {
     emerald: '#3B82F6',          // Primary action & active status (Electric Blue)
     emeraldDim: 'rgba(59, 130, 246, 0.14)',
     emeraldGlow: 'rgba(59, 130, 246, 0.30)',
+    green: '#10B981',            // Loaded / ready / online
+    greenDim: 'rgba(16, 185, 129, 0.14)',
+    greenGlow: 'rgba(16, 185, 129, 0.35)',
     blue: '#3B82F6',
     blueDim: 'rgba(59, 130, 246, 0.14)',
     blueGlow: 'rgba(59, 130, 246, 0.30)',

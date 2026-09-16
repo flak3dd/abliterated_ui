@@ -12,7 +12,7 @@ This dataset is the local RAG source of truth for Abliterated UI talking to NVID
 - Network routing and hostnames
 - vLLM inference API
 - Image studio / Diffusers bridge
-- ComfyUI, Spark controller, gateway
+- Spark controller, gateway
 - App screens and npm scripts
 - On-disk model storage inventory
 - Local RAG operations

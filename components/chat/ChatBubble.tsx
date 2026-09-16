@@ -10,6 +10,7 @@ import * as Haptics from 'expo-haptics';
 import Animated, { FadeInUp, FadeIn } from 'react-native-reanimated';
 import { TestResultCard } from './TestResultCard';
 import { SwarmInspectorCard } from './SwarmInspectorCard';
+import { AgentRunCard } from './AgentRunCard';
 import { useSandboxStore } from '../../stores/useSandboxStore';
 import { useChatStore } from '../../stores/useChatStore';
 import { useMeshStore } from '../../stores/useMeshStore';
@@ -494,6 +495,14 @@ export const ChatBubbleBase: React.FC<ChatBubbleProps> = ({
         {message.swarmSession && (
           <SwarmInspectorCard swarm={message.swarmSession} />
         )}
+        {message.agentRun && (
+          <AgentRunCard
+            run={message.agentRun}
+            onContinue={(run) => {
+              void useChatStore.getState().continueAgentRun(run);
+            }}
+          />
+        )}
 
         {/* Content */}
         <View style={styles.contentWrapper}>
@@ -606,7 +615,8 @@ export const ChatBubble = React.memo(ChatBubbleBase, (prevProps, nextProps) => {
     prevProps.isStreaming === nextProps.isStreaming &&
     prevProps.message.reasoning === nextProps.message.reasoning &&
     prevProps.message.groundingReport === nextProps.message.groundingReport &&
-    prevProps.message.swarmSession === nextProps.message.swarmSession
+    prevProps.message.swarmSession === nextProps.message.swarmSession &&
+    prevProps.message.agentRun === nextProps.message.agentRun
   );
 });
 

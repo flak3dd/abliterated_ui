@@ -94,7 +94,7 @@ export const useVoiceStore = create<VoiceStoreState>((set, get) => ({
     const apiKey = activeEp?.provider === 'featherless'
       ? meshState.featherlessApiKey
       : meshState.abliteratedApiKey;
-    const model = activeEp?.defaultModel || (activeHost.includes('featherless') ? 'meta-llama/Meta-Llama-3.1-8B-Instruct' : 'qwen-abliterated');
+    const model = meshState.servingModel || activeEp?.defaultModel || (activeHost.includes('featherless') ? 'meta-llama/Meta-Llama-3.1-8B-Instruct' : 'qwen-abliterated');
 
     let responseText = '';
 

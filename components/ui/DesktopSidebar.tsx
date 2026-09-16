@@ -12,7 +12,6 @@ import {
   MessageSquare,
   Sparkles,
   CreditCard,
-  Activity,
   Mic,
   Radio,
   Plus,
@@ -96,9 +95,8 @@ export const DesktopSidebar: React.FC<DesktopSidebarProps> = ({ onOpenEnvModal }
     { label: 'Chat', path: '/', icon: MessageSquare },
     { label: 'Image Studio', path: '/studio', icon: Sparkles },
     { label: 'ID Studio', path: '/id-studio', icon: CreditCard },
-    { label: 'Telemetry', path: '/telemetry', icon: Activity },
+    { label: 'Radar', path: '/radar', icon: Radio },
     { label: 'Voice Mode', path: '/voice', icon: Mic },
-    { label: 'Radar Mesh', path: '/radar', icon: Radio },
   ];
 
   const getStatusDotColor = () => {
@@ -283,7 +281,7 @@ export const DesktopSidebar: React.FC<DesktopSidebarProps> = ({ onOpenEnvModal }
             >
               <Cpu size={11} color={target === 'dgx_spark' ? Colors.brand.sky : Colors.text.tertiary} />
               <Text style={[styles.targetChoiceText, target === 'dgx_spark' && styles.targetChoiceTextActiveSky]}>
-                Cloud
+                Spark
               </Text>
             </TouchableOpacity>
           </View>
@@ -321,7 +319,7 @@ export const DesktopSidebar: React.FC<DesktopSidebarProps> = ({ onOpenEnvModal }
               ]}
               numberOfLines={1}
             >
-              {meshMode === 'spark' ? 'Spark (103)' : 'Cloud Mesh'}
+              {meshMode === 'spark' ? 'Spark' : 'Cloud'}
             </Text>
           </TouchableOpacity>
           <PingIndicator />
@@ -340,10 +338,13 @@ const styles = StyleSheet.create({
     display: 'flex',
     flexDirection: 'column',
     height: '100%',
+    minHeight: 0,
+    flexShrink: 0,
     paddingHorizontal: 12,
     paddingTop: 14,
     paddingBottom: 10,
     userSelect: 'none' as any,
+    ...(Platform.OS === 'web' ? ({ overflow: 'hidden' } as any) : null),
   },
   brandRow: {
     flexDirection: 'row',
@@ -510,6 +511,7 @@ const styles = StyleSheet.create({
   },
   sessionScroll: {
     flex: 1,
+    minHeight: 0,
   },
   emptySessions: {
     fontSize: 11,

@@ -11,6 +11,15 @@ export type MatrixPhase =
 
 export type MatrixSpectrum = 'green' | 'blue' | 'amber' | 'rose' | 'violet' | 'rainbow';
 
+export const MATRIX_SPECTRUM_ORDER: MatrixSpectrum[] = [
+  'blue',
+  'green',
+  'amber',
+  'rose',
+  'violet',
+  'rainbow',
+];
+
 export type GlyphSetType = 'katakana' | 'hex' | 'binary' | 'ascii' | 'mixed' | 'telemetry' | 'abliterad';
 
 export interface MatrixColorPalette {
@@ -39,6 +48,8 @@ export interface RainColumn {
   length: number;
   plane: 1 | 2 | 3;
   chars: string[];
+  fromChars: string[];
+  morph: number[];
   lastUpdate: number;
   splashCooldown: number;
 }

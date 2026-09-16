@@ -3,6 +3,9 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Message, ChatSession, SessionEnvironment, WorkspaceFile, SwarmSession } from '../types';
 import { useMeshStore } from './useMeshStore';
 import { useSwarmStore, registerSwarmListeners } from './useSwarmStore';
+import { useAgentStore } from './useAgentStore';
+import { evaluateAgentGate } from '../services/agent/gate';
+import type { AgentRun } from '../types/agent';
 import { evaluateSwarmNeed } from '../services/swarmService';
 import { streamChatCompletion } from '../services/vllmService';
 import {
@@ -11,6 +14,7 @@ import {
 } from '../services/zipService';
 import { telemetryBridge } from '../services/matrix/TelemetryStreamBridge';
 import { evaluateFactualGrounding } from '../services/hallucinationDetector';
+import { useModelSession } from './useModelSession';
 import { useRagStore } from './useRagStore';
 import {
   markFileDirty,
@@ -37,6 +41,7 @@ interface ChatState {
   deleteSession: (id: string) => void;
   clearCurrentSession: () => void;
   sendMessage: (text: string) => Promise<void>;
+  continueAgentRun: (prior: import('../types/agent').AgentRun) => Promise<void>;
   stopStreaming: () => void;
   loadFromStorage: () => Promise<void>;
   saveToStorage: () => Promise<void>;
@@ -445,6 +450,137 @@ export const useChatStore = create<ChatState>((set, get) => ({
         swarmDecisionReason = evaluation.reason;
       }
 
+      const isAgentMode = useAgentStore.getState().isAgentMode;
+      const meshMode = useMeshStore.getState().meshMode;
+      const agentGate = evaluateAgentGate({
+        isAgentMode,
+        meshMode,
+        hasActiveEnv: Boolean(activeEnv),
+      });
+
+      if (agentGate.blocked) {
+        const blockedRun: AgentRun = {
+          id: 'agent_blocked_' + Date.now(),
+          sessionId: currentSessionId!,
+          envId: activeEnv?.id || '',
+          goal: text,
+          status: 'failed',
+          steps: [],
+          stepCount: 0,
+          execCount: 0,
+          error: agentGate.reason,
+          summary: agentGate.reason,
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+        };
+        set((state) => {
+          const sessionMsgs = [...(state.messages[currentSessionId!] || [])];
+          const idx = sessionMsgs.findIndex((m) => m.id === assistantMsgId);
+          if (idx !== -1) {
+            sessionMsgs[idx] = {
+              ...sessionMsgs[idx],
+              content: agentGate.reason,
+              agentRun: blockedRun,
+            };
+          }
+          const stillMine = state.activeAbortController === controller;
+          return {
+            messages: { ...state.messages, [currentSessionId!]: sessionMsgs },
+            ...(stillMine
+              ? { isStreaming: false, streamingSessionId: null, activeAbortController: null }
+              : {}),
+          };
+        });
+        void get().flushSave();
+        return;
+      }
+
+      if (agentGate.run && activeEnv) {
+        const envId = activeEnv.id;
+        try {
+          const finished = await useAgentStore.getState().startAgentRun({
+            goal: text,
+            sessionId: currentSessionId!,
+            envId,
+            signal: controller.signal,
+            getEnv: () => get().environments[envId] || null,
+            writeFile: (path, content, language) => {
+              get().addOrUpdateFile(envId, path, content, language);
+            },
+            onUpdate: (run, content) => {
+              set((state) => {
+                const sessionMsgs = [...(state.messages[currentSessionId!] || [])];
+                const idx = sessionMsgs.findIndex((m) => m.id === assistantMsgId);
+                if (idx === -1) return state;
+                sessionMsgs[idx] = { ...sessionMsgs[idx], content, agentRun: run };
+                return {
+                  messages: { ...state.messages, [currentSessionId!]: sessionMsgs },
+                };
+              });
+            },
+          });
+          set((state) => {
+            const sessionMsgs = [...(state.messages[currentSessionId!] || [])];
+            const idx = sessionMsgs.findIndex((m) => m.id === assistantMsgId);
+            if (idx !== -1) {
+              const content =
+                finished.summary ||
+                finished.error ||
+                sessionMsgs[idx].content ||
+                (finished.status === 'failed' ? 'Agent failed.' : 'Agent finished.');
+              sessionMsgs[idx] = {
+                ...sessionMsgs[idx],
+                content,
+                agentRun: finished,
+              };
+            }
+            const stillMine = state.activeAbortController === controller;
+            return {
+              messages: { ...state.messages, [currentSessionId!]: sessionMsgs },
+              ...(stillMine
+                ? { isStreaming: false, streamingSessionId: null, activeAbortController: null }
+                : {}),
+            };
+          });
+        } catch (agentErr: any) {
+          const errText = agentErr?.message || 'BUILD agent failed to start';
+          const failedRun: AgentRun = {
+            id: 'agent_err_' + Date.now(),
+            sessionId: currentSessionId!,
+            envId,
+            goal: text,
+            status: 'failed',
+            steps: [],
+            stepCount: 0,
+            execCount: 0,
+            error: errText,
+            summary: errText,
+            createdAt: Date.now(),
+            updatedAt: Date.now(),
+          };
+          set((state) => {
+            const sessionMsgs = [...(state.messages[currentSessionId!] || [])];
+            const idx = sessionMsgs.findIndex((m) => m.id === assistantMsgId);
+            if (idx !== -1) {
+              sessionMsgs[idx] = {
+                ...sessionMsgs[idx],
+                content: errText,
+                agentRun: failedRun,
+              };
+            }
+            const stillMine = state.activeAbortController === controller;
+            return {
+              messages: { ...state.messages, [currentSessionId!]: sessionMsgs },
+              ...(stillMine
+                ? { isStreaming: false, streamingSessionId: null, activeAbortController: null }
+                : {}),
+            };
+          });
+        }
+        void get().flushSave();
+        return;
+      }
+
       if (shouldSpawnSwarm && activeEnv) {
         const swarm = await useSwarmStore.getState().startSwarmTask(
           text,
@@ -498,7 +634,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         }
       }
 
-      const CONTEXT_TURNS = 8;
+      const CONTEXT_TURNS = 16;
       const MAX_TURN_CHARS = 1800;
       const messageHistory = (get().messages[currentSessionId!] || [])
         .filter((m) => m.id !== assistantMsgId && (m.role === 'user' || m.role === 'assistant'))
@@ -563,7 +699,10 @@ CODE RULES: put the exact relative path in every fence (\`\`\`python app.py). Sh
       const apiKey = activeEp?.provider === 'featherless'
         ? meshState.featherlessApiKey
         : meshState.abliteratedApiKey;
-      const model = activeEp?.defaultModel;
+      const model =
+        useModelSession.getState().resolvedChatId() ||
+        meshState.servingModel ||
+        activeEp?.defaultModel;
 
       await streamChatCompletion({
         host: activeHost,
@@ -731,6 +870,110 @@ CODE RULES: put the exact relative path in every fence (\`\`\`python app.py). Sh
     }
   },
 
+  continueAgentRun: async (prior) => {
+    if (!prior || get().isStreaming) return;
+    const currentSessionId = prior.sessionId || get().activeSessionId;
+    if (!currentSessionId) return;
+    const envId = prior.envId;
+    const activeEnv = envId ? get().environments[envId] : null;
+    if (!activeEnv) return;
+
+    // Ensure agent mode on for gate UX
+    useAgentStore.getState().setAgentMode(true);
+
+    const userMsg: Message = {
+      id: 'msg_' + Date.now(),
+      role: 'user',
+      content: `Continue BUILD agent: ${prior.goal.slice(0, 120)}${prior.goal.length > 120 ? '…' : ''}`,
+      timestamp: Date.now(),
+    };
+    const assistantMsgId = 'msg_' + (Date.now() + 1);
+    const assistantMsg: Message = {
+      id: assistantMsgId,
+      role: 'assistant',
+      content: '',
+      reasoning: '',
+      timestamp: Date.now(),
+    };
+    const controller = new AbortController();
+    set((state) => ({
+      isStreaming: true,
+      streamingSessionId: currentSessionId,
+      activeAbortController: controller,
+      activeSessionId: currentSessionId,
+      messages: {
+        ...state.messages,
+        [currentSessionId]: [
+          ...(state.messages[currentSessionId] || []),
+          userMsg,
+          assistantMsg,
+        ],
+      },
+    }));
+
+    try {
+      const finished = await useAgentStore.getState().continueAgentRun({
+        prior,
+        signal: controller.signal,
+        getEnv: () => get().environments[envId] || null,
+        writeFile: (path, content, language) => {
+          get().addOrUpdateFile(envId, path, content, language);
+        },
+        onUpdate: (run, content) => {
+          set((state) => {
+            const sessionMsgs = [...(state.messages[currentSessionId] || [])];
+            const idx = sessionMsgs.findIndex((m) => m.id === assistantMsgId);
+            if (idx === -1) return state;
+            sessionMsgs[idx] = { ...sessionMsgs[idx], content, agentRun: run };
+            return {
+              messages: { ...state.messages, [currentSessionId]: sessionMsgs },
+            };
+          });
+        },
+      });
+      set((state) => {
+        const sessionMsgs = [...(state.messages[currentSessionId] || [])];
+        const idx = sessionMsgs.findIndex((m) => m.id === assistantMsgId);
+        if (idx !== -1) {
+          const content =
+            finished.summary ||
+            finished.error ||
+            sessionMsgs[idx].content ||
+            'Agent finished.';
+          sessionMsgs[idx] = {
+            ...sessionMsgs[idx],
+            content,
+            agentRun: finished,
+          };
+        }
+        const stillMine = state.activeAbortController === controller;
+        return {
+          messages: { ...state.messages, [currentSessionId]: sessionMsgs },
+          ...(stillMine
+            ? { isStreaming: false, streamingSessionId: null, activeAbortController: null }
+            : {}),
+        };
+      });
+    } catch (e: any) {
+      const errText = e?.message || 'Continue failed';
+      set((state) => {
+        const sessionMsgs = [...(state.messages[currentSessionId] || [])];
+        const idx = sessionMsgs.findIndex((m) => m.id === assistantMsgId);
+        if (idx !== -1) {
+          sessionMsgs[idx] = { ...sessionMsgs[idx], content: errText };
+        }
+        const stillMine = state.activeAbortController === controller;
+        return {
+          messages: { ...state.messages, [currentSessionId]: sessionMsgs },
+          ...(stillMine
+            ? { isStreaming: false, streamingSessionId: null, activeAbortController: null }
+            : {}),
+        };
+      });
+    }
+    void get().flushSave();
+  },
+
   stopStreaming: () => {
     const controller = get().activeAbortController;
     if (controller) {
@@ -740,6 +983,11 @@ CODE RULES: put the exact relative path in every fence (\`\`\`python app.py). Sh
       useSwarmStore.getState().cancelSwarm();
     } catch {
       /* swarm optional */
+    }
+    try {
+      useAgentStore.getState().cancelAgentRun();
+    } catch {
+      /* agent optional */
     }
     set({
       isStreaming: false,

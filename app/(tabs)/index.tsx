@@ -20,21 +20,21 @@ import { EnvironmentModal } from '../../components/chat/EnvironmentModal';
 import { SandboxTerminalDrawer } from '../../components/chat/SandboxTerminalDrawer';
 import { MatrixModal } from '../../components/matrix/MatrixModal';
 import { MatrixCanvasView } from '../../components/matrix/MatrixCanvasView';
-import { SuggestionStrip } from '../../components/chat/SuggestionStrip';
 import { ChatBubble } from '../../components/chat/ChatBubble';
 import { InputDock } from '../../components/chat/InputDock';
 import { useMatrixStore } from '../../stores/useMatrixStore';
+import { isDesktopWeb, WEB_SHELL } from '../../theme/layout';
 
 export default function ChatScreen() {
   const { width } = useWindowDimensions();
-  const isDesktop = Platform.OS === 'web' && width >= 768;
+  const isDesktop = isDesktopWeb(width);
 
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [envModalOpen, setEnvModalOpen] = useState(false);
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
   const [isSandboxPanelOpen, setIsSandboxPanelOpen] = useState(false);
 
-  const { isOpen: isMatrixOpen, setIsOpen: setMatrixOpen } = useMatrixStore();
+  const { isOpen: isMatrixOpen } = useMatrixStore();
   const flatListRef = useRef<FlatList>(null);
 
   const {
@@ -66,10 +66,6 @@ export default function ChatScreen() {
     }
   }, [currentMessages.length, sessionStreaming]);
 
-  const handleSelectPrompt = (prompt: string) => {
-    sendMessage(prompt);
-  };
-
   const handleSendMessage = (text: string) => {
     sendMessage(text);
   };
@@ -87,20 +83,17 @@ export default function ChatScreen() {
           style={styles.centerPane}
           behavior={Platform.OS === 'ios' ? 'padding' : undefined}
         >
-          {/* Matrix Rain Background Layer */}
           <MatrixCanvasView variant="ambient" />
 
           {/* Desktop-Aware Header Bar */}
           <HeaderBar
             onOpenDrawer={() => setDrawerOpen(true)}
-            onOpenMatrix={() => setMatrixOpen(true)}
             onToggleSidebar={() => setIsSidebarOpen(!isSidebarOpen)}
             onToggleSandboxPanel={() => setIsSandboxPanelOpen(!isSandboxPanelOpen)}
             isSandboxPanelOpen={isSandboxPanelOpen}
             isSidebarOpen={isSidebarOpen}
             isDesktop={isDesktop}
-            title="Spark AI"
-            subtitle="GB10"
+            spectrumCycle
           />
 
           {/* Ephemeral Environment Capsule (Mobile/Tablet fallback) */}
@@ -110,14 +103,6 @@ export default function ChatScreen() {
 
           {/* Centered Column for Desktop Ergonomics */}
           <View style={styles.contentColumn}>
-            {/* Quick-Prompt Suggestions */}
-            {currentMessages.length <= 1 && (
-              <SuggestionStrip
-                onSelectPrompt={handleSelectPrompt}
-                disabled={sessionStreaming}
-              />
-            )}
-
             {/* Messages FlatList */}
             <FlatList
               ref={flatListRef}
@@ -178,20 +163,24 @@ export default function ChatScreen() {
 const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
-    backgroundColor: '#08080B',
+    backgroundColor: '#2A2A2E',
+    ...WEB_SHELL,
   },
   appContainer: {
     flex: 1,
     flexDirection: 'row',
-    backgroundColor: '#08080B',
+    backgroundColor: '#2A2A2E',
     overflow: 'hidden',
+    ...WEB_SHELL,
   },
   centerPane: {
     flex: 1,
-    backgroundColor: 'transparent',
+    backgroundColor: '#2A2A2E',
     display: 'flex',
     flexDirection: 'column',
     position: 'relative',
+    minHeight: 0,
+    minWidth: 0,
   },
   contentColumn: {
     flex: 1,
@@ -200,9 +189,12 @@ const styles = StyleSheet.create({
     alignSelf: 'center',
     display: 'flex',
     flexDirection: 'column',
+    minHeight: 0,
+    minWidth: 0,
   },
   messageList: {
     flex: 1,
+    minHeight: 0,
   },
   messageListContent: {
     paddingVertical: 8,

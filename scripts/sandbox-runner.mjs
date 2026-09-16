@@ -10,8 +10,9 @@
  */
 
 import http from 'node:http';
-import { mkdir, writeFile, rm } from 'node:fs/promises';
+import { mkdir, writeFile, rm, appendFile, readFile } from 'node:fs/promises';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { exec, execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 
@@ -36,6 +37,10 @@ const PORT = Number(process.env.SANDBOX_PORT || 17330);
 const HOST = process.env.SANDBOX_HOST || '127.0.0.1';
 const SANDBOX_BASE_LOCAL = '/tmp/spark-sandboxes';
 const SANDBOX_BASE_REMOTE = '/tmp/spark-sandboxes';
+const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const IMAGE_DEBUG_LOG = path.join(REPO_ROOT, 'logs', 'image-gen-debug.jsonl');
+const imageDebugRing = [];
+const IMAGE_DEBUG_RING_MAX = 400;
 
 const C = {
   reset: '\x1b[0m',
@@ -47,13 +52,21 @@ const C = {
   dim: '\x1b[2m',
 };
 
+function isPrivateHost(hostname) {
+  const h = String(hostname || '').toLowerCase().replace(/^\[|\]$/g, '');
+  if (h === 'localhost' || h === '127.0.0.1' || h === '::1') return true;
+  if (/^192\.168\.\d{1,3}\.\d{1,3}$/.test(h)) return true;
+  if (/^10\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(h)) return true;
+  if (/^172\.(1[6-9]|2\d|3[0-1])\.\d{1,3}\.\d{1,3}$/.test(h)) return true;
+  if (/^100\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(h)) return true; // Tailscale CGNAT
+  return false;
+}
+
 function allowedOrigin(req) {
   const origin = String(req?.headers?.origin || '');
   try {
     const u = new URL(origin);
-    if (u.hostname === 'localhost' || u.hostname === '127.0.0.1' || u.hostname === '[::1]') {
-      return origin;
-    }
+    if (isPrivateHost(u.hostname)) return origin;
   } catch {
     /* ignore */
   }
@@ -374,6 +387,53 @@ const server = http.createServer(async (req, res) => {
           });
         }
       }
+    }
+
+    // Image-gen live debug feed (agent: GET /api/debug/image-gen  or  tail logs/image-gen-debug.jsonl)
+    if (pathname === '/api/debug/image-gen' && req.method === 'POST') {
+      const body = await parseJsonBody(req);
+      const evt = {
+        ts: body.ts || new Date().toISOString(),
+        t: body.t || Date.now(),
+        source: body.source || 'ui',
+        level: body.level || 'info',
+        event: body.event || 'log',
+        message: String(body.message || '').slice(0, 800),
+        model: body.model,
+        host: body.host,
+        elapsedMs: body.elapsedMs,
+        httpStatus: body.httpStatus,
+        detail: body.detail && typeof body.detail === 'object' ? body.detail : undefined,
+      };
+      imageDebugRing.push(evt);
+      if (imageDebugRing.length > IMAGE_DEBUG_RING_MAX) {
+        imageDebugRing.splice(0, imageDebugRing.length - IMAGE_DEBUG_RING_MAX);
+      }
+      try {
+        await mkdir(path.dirname(IMAGE_DEBUG_LOG), { recursive: true });
+        await appendFile(IMAGE_DEBUG_LOG, JSON.stringify(evt) + '\n');
+      } catch (err) {
+        console.warn('[image-debug] write failed', err.message);
+      }
+      return sendJson(res, 200, { ok: true });
+    }
+
+    if (pathname === '/api/debug/image-gen' && req.method === 'GET') {
+      const limit = Math.min(400, Math.max(1, Number(url.searchParams.get('limit') || 120)));
+      return sendJson(res, 200, {
+        ok: true,
+        path: IMAGE_DEBUG_LOG,
+        count: imageDebugRing.length,
+        events: imageDebugRing.slice(-limit),
+      });
+    }
+
+    if (pathname === '/api/debug/image-gen' && req.method === 'DELETE') {
+      imageDebugRing.length = 0;
+      try {
+        await writeFile(IMAGE_DEBUG_LOG, '');
+      } catch {}
+      return sendJson(res, 200, { ok: true });
     }
 
     // 5. DELETE /api/sandbox/:envId

@@ -31,6 +31,7 @@ yarn-error.*
 *.pem
 
 # local env files
+.env
 .env*.local
 
 # typescript
@@ -43,3 +44,8 @@ yarn-error.*
 # logs
 logs/
 
+
+# python / local sandboxes
+__pycache__/
+*.pyc
+sandbox/

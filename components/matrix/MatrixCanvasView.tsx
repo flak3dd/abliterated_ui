@@ -72,6 +72,7 @@ export const MatrixCanvasView: React.FC<MatrixCanvasViewProps> = ({
     renderer.setVariant(variant);
     renderer.resize(width, height);
     renderer.setPhase(variant === 'ambient' ? 'PHASE_4_RAIN' : phase);
+    if (variant === 'ambient') renderer.restartLoop();
     renderer.start();
     rendererRef.current = renderer;
 

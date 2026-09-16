@@ -1,16 +1,28 @@
 import React from 'react';
 import { StyleSheet, Text, TouchableOpacity, View, Platform } from 'react-native';
-import { Menu, Zap, Terminal, PanelLeft, FlaskConical, Cpu, ShieldCheck, BookOpen, Globe } from 'lucide-react-native';
+import { Menu, PanelLeft, FlaskConical } from 'lucide-react-native';
+import Svg, { Circle, Ellipse, Path } from 'react-native-svg';
 import * as Haptics from 'expo-haptics';
 import Colors from '../../theme/colors';
+import { ModelSelector } from '../models/ModelSelector';
 import { PingIndicator } from '../telemetry/PingIndicator';
-import { useChatStore } from '../../stores/useChatStore';
-import { useMeshStore } from '../../stores/useMeshStore';
-import { useRagStore } from '../../stores/useRagStore';
+import { useMatrixStore } from '../../stores/useMatrixStore';
+import { MATRIX_PALETTES } from '../../services/matrix/MatrixTypes';
+
+const SpectrumSkull: React.FC<{ color: string; size?: number }> = ({
+  color,
+  size = 16,
+}) => (
+  <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
+    <Ellipse cx="12" cy="11" rx="7.35" ry="7.85" stroke={color} strokeWidth="1.7" />
+    <Circle cx="9" cy="10.35" r="1.4" fill={color} />
+    <Circle cx="15" cy="10.35" r="1.4" fill={color} />
+    <Path d="M12 11.7L10.55 14.35h2.9z" fill={color} />
+  </Svg>
+);
 
 interface HeaderBarProps {
   onOpenDrawer?: () => void;
-  onOpenMatrix?: () => void;
   onToggleSidebar?: () => void;
   onToggleSandboxPanel?: () => void;
   isSandboxPanelOpen?: boolean;
@@ -20,11 +32,11 @@ interface HeaderBarProps {
   subtitle?: string;
   modelTag?: string;
   modelSub?: string;
+  spectrumCycle?: boolean;
 }
 
 export const HeaderBar: React.FC<HeaderBarProps> = ({
   onOpenDrawer,
-  onOpenMatrix,
   onToggleSidebar,
   onToggleSandboxPanel,
   isSandboxPanelOpen = false,
@@ -34,17 +46,14 @@ export const HeaderBar: React.FC<HeaderBarProps> = ({
   subtitle,
   modelTag,
   modelSub,
+  spectrumCycle = false,
 }) => {
-  const { antiHallucination, toggleAntiHallucination } = useChatStore();
-  const { activeHost, meshMode, setMeshMode } = useMeshStore();
-  const { enabled: ragEnabled, chunks, toggleEnabled: toggleRag } = useRagStore();
+  const spectrum = useMatrixStore((s) => s.spectrum);
+  const cycleSpectrum = useMatrixStore((s) => s.cycleSpectrum);
+  const pal = MATRIX_PALETTES[spectrum];
 
-  const isSpark = meshMode === 'spark';
-  const isFeatherless = activeHost.includes('featherless');
-
-  const effectiveSubtitle = subtitle || (isSpark ? 'DGX Spark' : isFeatherless ? 'Featherless' : 'Cloud');
-  const effectiveModelTag = modelTag || (isSpark ? 'qwen-abliterated (FP8)' : isFeatherless ? 'Llama-3.1-8B (Mesh)' : 'qwen-abliterated (Cloud)');
-  const effectiveModelSub = modelSub || (isSpark ? 'Spark 103' : 'Sovereign Cloud');
+  const isImageSurface =
+    (title || '').includes('Studio') || (title || '').includes('ID');
 
   const handleMenuPress = () => {
     try {
@@ -58,18 +67,18 @@ export const HeaderBar: React.FC<HeaderBarProps> = ({
     }
   };
 
-  const handleMatrixPress = () => {
-    try {
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    } catch (e) {}
-    onOpenMatrix?.();
-  };
-
   const handleSandboxToggle = () => {
     try {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     } catch (e) {}
     onToggleSandboxPanel?.();
+  };
+
+  const handleSpectrumCycle = () => {
+    try {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    } catch (e) {}
+    cycleSpectrum();
   };
 
   return (
@@ -89,118 +98,48 @@ export const HeaderBar: React.FC<HeaderBarProps> = ({
           )}
         </TouchableOpacity>
 
-        {/* Center: Clean Title & Manual Switch */}
         <View style={styles.centerContainer}>
-          <Text style={styles.title}>{title}</Text>
-
-          {/* Simple & Effective Manual Mode Switch: Spark vs Cloud */}
-          <View style={styles.modeSwitchContainer}>
+          {spectrumCycle ? (
             <TouchableOpacity
-              style={[
-                styles.modeSwitchBtn,
-                isSpark && styles.modeSwitchBtnSparkActive,
-              ]}
-              onPress={() => {
-                try {
-                  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-                } catch (e) {}
-                setMeshMode('spark');
-              }}
-              activeOpacity={0.8}
+              style={styles.spectrumCycleBtn}
+              onPress={handleSpectrumCycle}
+              activeOpacity={0.7}
+              accessibilityRole="button"
+              accessibilityLabel={`Skull color ${pal.label}. Tap to cycle.`}
+              hitSlop={{ top: 8, bottom: 8, left: 4, right: 4 }}
             >
-              <Zap size={10} color={isSpark ? '#10B981' : '#71717A'} />
-              <Text style={[styles.modeSwitchText, isSpark && styles.modeSwitchTextSparkActive]}>
-                Spark
+              <SpectrumSkull color={pal.t1} size={16} />
+              <View
+                style={[
+                  styles.spectrumSwatch,
+                  spectrum === 'rainbow'
+                    ? ({
+                        backgroundImage:
+                          'linear-gradient(135deg, #ff004d, #ffb000, #39ff14, #00e5ff, #a855f7)',
+                        backgroundColor: pal.t1,
+                      } as any)
+                    : { backgroundColor: pal.t1 },
+                ]}
+              />
+              <Text style={[styles.spectrumCycleText, { color: pal.t1 }]}>
+                {spectrum.toUpperCase()}
               </Text>
             </TouchableOpacity>
-
-            <TouchableOpacity
-              style={[
-                styles.modeSwitchBtn,
-                !isSpark && styles.modeSwitchBtnCloudActive,
-              ]}
-              onPress={() => {
-                try {
-                  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-                } catch (e) {}
-                setMeshMode('cloud');
-              }}
-              activeOpacity={0.8}
-            >
-              <Globe size={10} color={!isSpark ? '#38BDF8' : '#71717A'} />
-              <Text style={[styles.modeSwitchText, !isSpark && styles.modeSwitchTextCloudActive]}>
-                Cloud
-              </Text>
-            </TouchableOpacity>
-          </View>
+          ) : (
+            <Text style={styles.title}>{title}</Text>
+          )}
         </View>
       </View>
 
-      {/* Desktop Center: Model pill + Anti-Hallucination Pill */}
       {isDesktop && (
         <View style={styles.centerPillGroup}>
-          <View style={styles.modelPill}>
-            <Cpu size={11} color={isSpark ? Colors.brand.emerald : Colors.brand.sky} />
-            <Text style={styles.modelPillText}>{effectiveModelTag}</Text>
-            <Text style={styles.modelPillDivider}>•</Text>
-            <Text style={styles.modelPillSub}>{effectiveModelSub}</Text>
-          </View>
-
-          <TouchableOpacity
-            style={[
-              styles.antiHallucinationHeaderPill,
-              ragEnabled && styles.antiHallucinationHeaderPillActive,
-            ]}
-            onPress={() => {
-              try {
-                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-              } catch (e) {}
-              toggleRag();
-            }}
-            activeOpacity={0.75}
-          >
-            <BookOpen size={11} color={ragEnabled ? Colors.brand.emerald : '#71717A'} />
-            <Text
-              style={[
-                styles.antiHallucinationHeaderText,
-                ragEnabled && styles.antiHallucinationHeaderTextActive,
-              ]}
-            >
-              {ragEnabled ? 'RAG ' + chunks.length : 'RAG OFF'}
-            </Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={[
-              styles.antiHallucinationHeaderPill,
-              antiHallucination && styles.antiHallucinationHeaderPillActive,
-            ]}
-            onPress={() => {
-              try {
-                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-              } catch (e) {}
-              toggleAntiHallucination();
-            }}
-            activeOpacity={0.75}
-          >
-            <ShieldCheck
-              size={11}
-              color={antiHallucination ? Colors.brand.emerald : '#71717A'}
-            />
-            <Text
-              style={[
-                styles.antiHallucinationHeaderText,
-                antiHallucination && styles.antiHallucinationHeaderTextActive,
-              ]}
-            >
-              {antiHallucination ? 'Anti-Hallucination: STRICT' : 'Anti-Hallucination: OFF'}
-            </Text>
-          </TouchableOpacity>
+          <ModelSelector lane={isImageSurface ? 'image' : 'chat'} variant="trigger" />
         </View>
       )}
 
       {/* Right: Matrix Trigger, Sandbox Panel Toggle & Latency Pill */}
       <View style={styles.rightContainer}>
+        {!isDesktop && <PingIndicator />}
         {/* Desktop Split Sandbox Toggle */}
         {isDesktop && onToggleSandboxPanel && (
           <TouchableOpacity
@@ -215,18 +154,6 @@ export const HeaderBar: React.FC<HeaderBarProps> = ({
           </TouchableOpacity>
         )}
 
-        {onOpenMatrix && (
-          <TouchableOpacity
-            style={styles.matrixBtn}
-            onPress={handleMatrixPress}
-            activeOpacity={0.7}
-          >
-            <Terminal size={11} color={Colors.brand.sky} />
-            <Text style={styles.matrixBtnText}>BLINGbling</Text>
-          </TouchableOpacity>
-        )}
-
-        <PingIndicator />
       </View>
     </View>
   );
@@ -257,6 +184,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     borderWidth: 1,
     borderColor: 'rgba(255, 255, 255, 0.06)',
+    ...(Platform.OS === 'web' ? ({ cursor: 'pointer' } as any) : null),
   },
   iconButtonActive: {
     backgroundColor: 'rgba(59, 130, 246, 0.1)',
@@ -272,6 +200,28 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     letterSpacing: -0.3,
     color: Colors.text.primary,
+  },
+  spectrumCycleBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 0,
+    paddingVertical: 0,
+    backgroundColor: 'transparent',
+    borderWidth: 0,
+    ...(Platform.OS === 'web' ? ({ cursor: 'pointer', overflow: 'visible' } as any) : null),
+  },
+  spectrumSwatch: {
+    width: 7,
+    height: 7,
+    borderRadius: 9999,
+    overflow: 'hidden',
+  },
+  spectrumCycleText: {
+    fontSize: 11,
+    fontFamily: 'Menlo',
+    fontWeight: '700',
+    letterSpacing: 0.6,
   },
   modeSwitchContainer: {
     flexDirection: 'row',

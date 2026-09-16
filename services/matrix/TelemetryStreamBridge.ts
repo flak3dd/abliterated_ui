@@ -27,9 +27,9 @@ class TelemetryBridge {
 
     return {
       vramUsedGb: telemetry?.vramUsedGb || 0,
-      vramTotalGb: telemetry?.vramTotalGb || 121.7,
-      gpuTemp: telemetry?.gpuTemp || 41,
-      tensorActive: telemetry?.tensorCoresActive || 94,
+      vramTotalGb: telemetry?.vramTotalGb || 0,
+      gpuTemp: telemetry?.gpuTemp || 0,
+      tensorActive: telemetry?.tensorCoresActive || 0,
       nvlinkGbps: 1200, // 1.2 TB/s NVLink 5
       recentTokens: [...this.recentTokens],
     };

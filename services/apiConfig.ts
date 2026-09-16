@@ -14,44 +14,28 @@ export interface CloudProviderConfig {
 }
 
 export const CLOUD_PROVIDERS: Record<string, CloudProviderConfig> = {
-  abliterated: {
-    id: 'abliterated_cloud',
-    name: 'Abliterated Cloud AI',
-    host: 'api.abliterated.ai',
+  abliteration: {
+    id: 'abliteration_cloud',
+    name: 'Abliteration Cloud',
+    host: 'api.abliteration.ai',
     port: 443,
-    baseUrl: 'https://api.abliterated.ai',
+    baseUrl: 'https://api.abliteration.ai/v1',
     provider: 'abliterated',
-    defaultModel: 'qwen-abliterated',
+    defaultModel: 'abliterated-model',
     availableModels: [
-      'qwen-abliterated',
-      'gpt-oss-120b-abliterated',
-      'krea2-raw-fp8',
+      'abliterated-model',
+      'abliterated-model-large',
+      'abliterated-model-large-v2',
     ],
-    description: 'Primary sovereign cloud inference cluster with NVFP4 hardware acceleration at api.abliterated.ai',
-    docsUrl: 'https://abliterated.app/docs',
-  },
-  abliterated_io: {
-    id: 'abliterated_io_mirror',
-    name: 'Abliterated Cloud IO (Mirror)',
-    host: 'api.abliterated.io',
-    port: 443,
-    baseUrl: 'https://api.abliterated.io',
-    provider: 'abliterated',
-    defaultModel: 'qwen-abliterated',
-    availableModels: [
-      'qwen-abliterated',
-      'gpt-oss-120b-abliterated',
-      'krea2-raw-fp8',
-    ],
-    description: 'Sovereign cloud cluster mirror at api.abliterated.io',
-    docsUrl: 'https://abliterated.app/docs',
+    description: 'Sovereign cloud inference at api.abliteration.ai',
+    docsUrl: 'https://abliteration.ai',
   },
   featherless: {
     id: 'featherless_cloud',
     name: 'Featherless AI',
     host: 'api.featherless.ai',
     port: 443,
-    baseUrl: 'https://api.featherless.ai',
+    baseUrl: 'https://api.featherless.ai/v1',
     provider: 'featherless',
     defaultModel: 'meta-llama/Meta-Llama-3.1-8B-Instruct',
     availableModels: [
@@ -82,8 +66,71 @@ function isLoopback(host: string): boolean {
  * Same-origin / loopback hosts inherit the page protocol so an HTTPS
  * Expo web session does not trip mixed-content blocks.
  */
+export function cloudProviderFromHost(hostOrUrl: string): 'featherless' | 'abliteration' | null {
+  const h = (hostOrUrl || '').toLowerCase();
+  if (h.includes('featherless')) return 'featherless';
+  if (h.includes('abliteration') || h.includes('abliterated.ai') || h.includes('abliterated.io')) {
+    return 'abliteration';
+  }
+  return null;
+}
+
+function pageLocation(): { protocol: string; hostname: string; origin: string } | null {
+  if (typeof window === 'undefined' || !window.location?.protocol) return null;
+  return {
+    protocol: window.location.protocol,
+    hostname: window.location.hostname || '',
+    origin: window.location.origin || '',
+  };
+}
+
+function cloudPath(path = ''): string {
+  const clean = path ? (path.startsWith('/') ? path : `/${path}`) : '';
+  if (!clean) return '/v1';
+  return clean.startsWith('/v1') ? clean : '/v1' + clean;
+}
+
+/**
+ * Same-origin Vercel `/api/cloud` on the public HTTPS app.
+ * Local Expo web cannot inject `.env` keys and Abliteration CORS
+ * rejects localhost, so DEV uses the cloud-key-proxy on :17332.
+ */
+export function cloudProxyUrlForPage(
+  page: { protocol?: string; hostname?: string; origin?: string } | null,
+  hostOrUrl: string,
+  path = ''
+): string | null {
+  const provider = cloudProviderFromHost(hostOrUrl);
+  if (!provider) return null;
+  const withV1 = cloudPath(path);
+  const protocol = page?.protocol || '';
+  const hostname = page?.hostname || '';
+  const origin = page?.origin || '';
+
+  if (protocol === 'https:' && origin && hostname && hostname !== 'localhost' && hostname !== '127.0.0.1' && !hostname.startsWith('192.168.')) {
+    return `${origin}/api/cloud/${provider}${withV1}`;
+  }
+
+  if (protocol === 'http:' && (hostname === 'localhost' || hostname === '127.0.0.1')) {
+    return `http://127.0.0.1:17332/${provider}${withV1}`;
+  }
+
+  if (protocol === 'http:' && (hostname.startsWith('192.168.') || hostname.startsWith('10.') || hostname.endsWith('.local'))) {
+    return `http://${hostname}:17332/${provider}${withV1}`;
+  }
+
+  return null;
+}
+
+export function resolveCloudProxyUrl(hostOrUrl: string, path = ''): string | null {
+  return cloudProxyUrlForPage(pageLocation(), hostOrUrl, path);
+}
+
 export function resolveApiUrl(hostOrUrl: string, port = 8000, path = ''): string {
   const cleanPath = path ? (path.startsWith('/') ? path : `/${path}`) : '';
+
+  const proxied = resolveCloudProxyUrl(hostOrUrl, cleanPath);
+  if (proxied) return proxied;
 
   // Already a full qualified HTTP/HTTPS URL
   if (hostOrUrl.startsWith('http://') || hostOrUrl.startsWith('https://')) {
@@ -93,10 +140,11 @@ export function resolveApiUrl(hostOrUrl: string, port = 8000, path = ''): string
 
   // Known cloud domains always use HTTPS on standard port
   if (
-    hostOrUrl.includes('abliterated.ai') ||
     hostOrUrl.includes('abliterated.io') ||
-    hostOrUrl.includes('featherless.io') ||
+    hostOrUrl.includes('abliteration.ai') ||
+    hostOrUrl.includes('abliterated.ai') ||
     hostOrUrl.includes('featherless.ai') ||
+    hostOrUrl.includes('featherless.io') ||
     port === 443
   ) {
     return `https://${hostOrUrl}${cleanPath}`;
@@ -150,7 +198,9 @@ export function buildApiHeaders(apiKey?: string, extraHeaders?: Record<string, s
   };
 
   if (apiKey && apiKey.trim().length > 0) {
-    headers['Authorization'] = `Bearer ${apiKey.trim()}`;
+    const trimmed = apiKey.trim();
+    headers['Authorization'] = `Bearer ${trimmed}`;
+    headers['x-api-key'] = trimmed;
   }
 
   return headers;

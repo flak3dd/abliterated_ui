@@ -4,7 +4,6 @@ import {
   Text,
   View,
   TouchableOpacity,
-  ScrollView,
   Platform,
 } from 'react-native';
 import {
@@ -19,13 +18,16 @@ import {
   FolderGit2,
   Package,
 } from 'lucide-react-native';
+import * as Haptics from 'expo-haptics';
 import Colors from '../../theme/colors';
 import { useMeshStore } from '../../stores/useMeshStore';
+import { useModelEnablement } from '../../stores/useModelEnablement';
+import { isModelEnabled } from '../../services/modelCatalog';
 
 export interface SafetensorsModel {
   id: string;
   name: string;
-  category: 'LLM Text' | 'Diffusion Hero' | 'Vision TE' | 'Turbo NVFP4' | 'Inpainting' | 'Graph Engine';
+  category: 'LLM Text' | 'Diffusion Hero' | 'Vision TE' | 'Turbo NVFP4' | 'Inpainting' | 'Graph Engine' | 'Document AI';
   filename: string;
   sizeGb: number;
   format: 'NVFP4' | 'FP8' | 'bfloat16';
@@ -116,37 +118,143 @@ const DEFAULT_SPARK_MODELS: SafetensorsModel[] = [
     verifiedSha: 'sha256:fa20...8811 (Validated)',
   },
   {
-    id: 'comfy-dolphin-sdxl',
-    name: 'PornMaster-ComfyUI-Dolphin-SDXL',
-    category: 'Graph Engine',
-    filename: 'dolphin_sdxl_master.safetensors',
-    sizeGb: 6.2,
+    id: 'ddb-edit',
+    name: 'DDB_Edit (xing0916)',
+    category: 'Inpainting',
+    filename: 'model-00001-of-00004.safetensors',
+    sizeGb: 16.2,
+    format: 'bfloat16',
+    shards: 4,
+    status: 'CACHED_NVME',
+    path: 'xing0916/DDB_Edit + Alpha-VLLM/Lumina-DiMOO',
+    description: 'Discrete Diffusion Bridges instruction editor with Lumina-DiMOO VQ-VAE.',
+    verifiedSha: 'HF shards · ECCV 2026',
+  },
+  {
+    id: 'layoutlmv3-base',
+    name: 'LayoutLMv3-Base (microsoft)',
+    category: 'Document AI',
+    filename: 'model.safetensors',
+    sizeGb: 0.5,
     format: 'bfloat16',
     shards: 1,
     status: 'CACHED_NVME',
-    path: 'ComfyUI/models/checkpoints/dolphin_master.safetensors',
-    description: 'Integrated node graph generative checkpoint with embedded ControlNet adapters.',
-    verifiedSha: 'sha256:88ee...f412 (Validated)',
+    path: 'spark-image/models/layoutlmv3-base',
+    description: 'Document layout + OCR zone encoder (HF microsoft/layoutlmv3-base) served on :7870.',
+    verifiedSha: 'HF microsoft/layoutlmv3-base',
   },
 ];
 
 type FilterTab = 'ALL' | 'ACTIVE' | 'DIFFUSION' | 'LLM';
 
-export const ModelStorageSection: React.FC = () => {
+function slugId(name: string): string {
+  return name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+}
+
+function matchMeta(idOrName: string): SafetensorsModel | undefined {
+  const key = idOrName.toLowerCase();
+  return DEFAULT_SPARK_MODELS.find(
+    (m) =>
+      m.id.toLowerCase() === key ||
+      m.name.toLowerCase() === key ||
+      key.includes(m.id.toLowerCase()) ||
+      m.path.toLowerCase().includes(key) ||
+      m.name.toLowerCase().includes(key)
+  );
+}
+
+function liveStatusFor(
+  id: string,
+  servingModel: string | null,
+  imageLoaded: string | null
+): 'LOADED_VRAM' | 'CACHED_NVME' {
+  const llm = (servingModel || '').toLowerCase();
+  const img = (imageLoaded || '').toLowerCase();
+  if (/qwen/i.test(id) && /qwen/i.test(llm)) return 'LOADED_VRAM';
+  if (img && (id.toLowerCase() === img || img.includes(id.toLowerCase()) || id.toLowerCase().includes(img))) {
+    return 'LOADED_VRAM';
+  }
+  if (/krea/i.test(id) && /krea/i.test(img)) return 'LOADED_VRAM';
+  if (/ddb/i.test(id) && /ddb/i.test(img)) return 'LOADED_VRAM';
+  return 'CACHED_NVME';
+}
+
+function modelsFromLive(
+  disk: { name: string; bytes: number; shards: number }[],
+  imageIds: string[],
+  servingModel: string | null,
+  imageLoaded: string | null
+): SafetensorsModel[] {
+  const rows: SafetensorsModel[] = [];
+  const seen = new Set<string>();
+
+  for (const m of disk) {
+    const meta = matchMeta(m.name);
+    const id = meta?.id || slugId(m.name);
+    if (seen.has(id)) continue;
+    seen.add(id);
+    rows.push({
+      id,
+      name: m.name,
+      category: meta?.category || 'LLM Text',
+      filename: meta?.filename || 'model.safetensors',
+      sizeGb: Number(((m.bytes || 0) / 1e9).toFixed(1)),
+      format: meta?.format || 'NVFP4',
+      shards: m.shards || 1,
+      status: liveStatusFor(id, servingModel, imageLoaded),
+      path: meta?.path || `spark/models/${m.name}`,
+      description: meta?.description || 'On-disk Spark weights from controller /api/status',
+      verifiedSha: `${((m.bytes || 0) / 1e9).toFixed(2)} GB live`,
+    });
+  }
+
+  for (const imageId of imageIds) {
+    const meta = matchMeta(imageId);
+    const id = meta?.id || imageId;
+    if (seen.has(id) || seen.has(imageId)) continue;
+    seen.add(id);
+    rows.push({
+      id,
+      name: meta?.name || imageId,
+      category: meta?.category || 'Diffusion Hero',
+      filename: meta?.filename || `${imageId}.safetensors`,
+      sizeGb: meta?.sizeGb || 0,
+      format: meta?.format || 'FP8',
+      shards: meta?.shards || 1,
+      status: liveStatusFor(id, servingModel, imageLoaded),
+      path: meta?.path || `spark-image/models/${imageId}`,
+      description: meta?.description || 'Live image-bridge model id from controller',
+      verifiedSha: 'live :7860 catalog',
+    });
+  }
+
+  return rows;
+}
+
+export const ModelStorageSection: React.FC<{ desktop?: boolean }> = ({ desktop = false }) => {
   const [activeFilter, setActiveFilter] = useState<FilterTab>('ALL');
   const [expandedId, setExpandedId] = useState<string | null>('qwen-35b-nvfp4');
   const telemetry = useMeshStore((s) => s.telemetry);
+  const telemetrySource = useMeshStore((s) => s.telemetrySource);
+  const servingModel = useMeshStore((s) => s.servingModel);
+  const imageLoadedModel = useMeshStore((s) => s.imageLoadedModel);
+  const liveDiskModels = useMeshStore((s) => s.liveDiskModels);
+  const liveImageModels = useMeshStore((s) => s.liveImageModels);
+  const enabledMap = useModelEnablement((s) => s.enabled);
+  const setEnabled = useModelEnablement((s) => s.setEnabled);
+  const live = telemetrySource === 'live';
 
-  const totalNvmeGb = 2048.0; // 2.0 TB NVMe PCIe Gen5
-  const totalWeightsGb = DEFAULT_SPARK_MODELS.reduce((acc, m) => acc + m.sizeGb, 0);
-  const vramActiveGb = DEFAULT_SPARK_MODELS.filter((m) => m.status === 'LOADED_VRAM').reduce((acc, m) => acc + m.sizeGb, 0);
-  const freeNvmeGb = totalNvmeGb - totalWeightsGb - 74.0; // Subtract OS/Docker cache
-  const freePercent = ((freeNvmeGb / totalNvmeGb) * 100).toFixed(0);
+  const models = live
+    ? modelsFromLive(liveDiskModels || [], liveImageModels || [], servingModel, imageLoadedModel)
+    : [];
 
-  const filteredModels = DEFAULT_SPARK_MODELS.filter((m) => {
+  const totalWeightsGb = models.reduce((acc, m) => acc + m.sizeGb, 0);
+  const vramActiveGb = models.filter((m) => m.status === 'LOADED_VRAM').reduce((acc, m) => acc + m.sizeGb, 0);
+
+  const filteredModels = models.filter((m) => {
     if (activeFilter === 'ACTIVE') return m.status === 'LOADED_VRAM';
     if (activeFilter === 'DIFFUSION') return m.category.includes('Diffusion') || m.category === 'Turbo NVFP4' || m.category === 'Inpainting';
-    if (activeFilter === 'LLM') return m.category === 'LLM Text' || m.category === 'Vision TE';
+    if (activeFilter === 'LLM') return m.category === 'LLM Text' || m.category === 'Vision TE' || m.category === 'Document AI';
     return true;
   });
 
@@ -159,64 +267,82 @@ export const ModelStorageSection: React.FC = () => {
       {/* Section Header with Hardware Specs */}
       <View style={styles.headerRow}>
         <View style={styles.headerLeft}>
-          <Server size={18} color={Colors.brand.emerald} />
+          <Server size={18} color={live ? Colors.brand.green : Colors.text.tertiary} />
           <View>
-            <Text style={styles.headerTitle}>SOVEREIGN CLOUD MODEL STORAGE</Text>
+            <Text style={styles.headerTitle}>SPARK MODEL STORAGE</Text>
             <Text style={styles.headerSubtitle}>
-              Weights on Spark NVMe · GB10 128 GB unified LPDDR5x
+              {live
+                ? `Live controller inventory · ${models.length} models`
+                : 'Waiting for live controller :17325'}
             </Text>
           </View>
         </View>
-        <View style={styles.nvmePill}>
-          <Text style={styles.nvmePillText}>{freePercent}% NVMe FREE</Text>
+        <View style={[styles.nvmePill, !live && styles.nvmePillDown]}>
+          <Text style={[styles.nvmePillText, !live && styles.nvmePillTextDown]}>
+            {live ? 'LIVE' : 'DOWN'}
+          </Text>
         </View>
       </View>
 
-      {/* Visual NVMe Storage Capacity Card */}
       <View style={styles.storageCard}>
-        {/* Multi-segmented Glowing Storage Bar */}
         <View style={styles.storageBarTrack}>
-          {/* VRAM Active Weight */} 
-          <View style={[styles.barSegment, { width: '12%', backgroundColor: Colors.brand.emerald }]} />
-          {/* Diffusion Models */} 
-          <View style={[styles.barSegment, { width: '18%', backgroundColor: '#0EA5E9' }]} />
-          {/* Vision TE & LoRA */} 
-          <View style={[styles.barSegment, { width: '6%', backgroundColor: '#F59E0B' }]} />
-          {/* Free NVMe Space */} 
-          <View style={[styles.barSegment, { width: '64%', backgroundColor: '#27272A' }]} />
+          <View
+            style={[
+              styles.barSegment,
+              {
+                width: totalWeightsGb > 0 ? `${Math.min(100, Math.round((vramActiveGb / Math.max(totalWeightsGb, 0.1)) * 100))}%` : '0%',
+                backgroundColor: Colors.brand.green,
+              },
+            ]}
+          />
+          <View
+            style={[
+              styles.barSegment,
+              { flex: 1, backgroundColor: '#27272A' },
+            ]}
+          />
         </View>
 
-        {/* Storage Stats Grid */}
         <View style={styles.statsGrid}>
           <View style={styles.statItem}>
-            <Text style={styles.statLabel}>TOTAL NVMe</Text>
-            <Text style={styles.statValue}>{totalNvmeGb.toFixed(0)} GB</Text>
-            <Text style={styles.statSub}>2.0 TB Fast Gen5</Text>
+            <Text style={styles.statLabel}>LIVE WEIGHTS</Text>
+            <Text style={styles.statValue}>{live ? totalWeightsGb.toFixed(1) : '—'} GB</Text>
+            <Text style={styles.statSub}>{live ? `${models.length} from controller` : 'No inventory'}</Text>
           </View>
           <View style={styles.statItem}>
-            <Text style={styles.statLabel}>SAFETENSORS</Text>
-            <Text style={[styles.statValue, { color: '#0EA5E9' }]}>{totalWeightsGb.toFixed(1)} GB</Text>
-            <Text style={styles.statSub}>{DEFAULT_SPARK_MODELS.length} Models Cached</Text>
+            <Text style={styles.statLabel}>IN MEMORY</Text>
+            <Text style={[styles.statValue, { color: Colors.brand.green }]}>
+              {live ? vramActiveGb.toFixed(1) : '—'} GB
+            </Text>
+            <Text style={styles.statSub}>
+              {live
+                ? `${models.filter((m) => m.status === 'LOADED_VRAM').length} loaded`
+                : '—'}
+            </Text>
           </View>
           <View style={styles.statItem}>
             <Text style={styles.statLabel}>UNIFIED MEM</Text>
             <Text style={[styles.statValue, { color: Colors.brand.emerald }]}>
-              {telemetry.vramUsedGb.toFixed(1)} GB
+              {live ? telemetry.vramUsedGb.toFixed(1) : '—'} GB
             </Text>
             <Text style={styles.statSub}>
-              {(telemetry.unifiedSpecGb || 128)} GB LPDDR5x
+              {live && telemetry.unifiedSpecGb
+                ? `${telemetry.unifiedSpecGb} GB LPDDR5x spec`
+                : 'Live /proc/meminfo'}
             </Text>
           </View>
           <View style={styles.statItem}>
-            <Text style={styles.statLabel}>AVAILABLE</Text>
-            <Text style={[styles.statValue, { color: '#E4E4E7' }]}>{freeNvmeGb.toFixed(0)} GB</Text>
-            <Text style={styles.statSub}>{freePercent}% Unallocated</Text>
+            <Text style={styles.statLabel}>CUDA VISIBLE</Text>
+            <Text style={[styles.statValue, { color: '#E4E4E7' }]}>
+              {live && telemetry.vramTotalGb ? telemetry.vramTotalGb.toFixed(1) : '—'} GB
+            </Text>
+            <Text style={styles.statSub}>{live ? 'MemTotal' : '—'}</Text>
           </View>
         </View>
       </View>
 
       {/* Filter Tabs */}
-      <View style={styles.filterRow}>
+      <View style={[styles.filterRow, desktop && styles.filterRowWrap]}>
         {(['ALL', 'ACTIVE', 'DIFFUSION', 'LLM'] as FilterTab[]).map((tab) => (
           <TouchableOpacity
             key={tab}
@@ -230,25 +356,52 @@ export const ModelStorageSection: React.FC = () => {
                 activeFilter === tab && styles.filterChipTextActive,
               ]}
             >
-              {tab === 'ALL' && 'All Models (' + DEFAULT_SPARK_MODELS.length + ')'}
-              {tab === 'ACTIVE' && 'In VRAM (1)'}
-              {tab === 'DIFFUSION' && 'Diffusion (4)'}
-              {tab === 'LLM' && 'LLM & TE (2)'}
+              {tab === 'ALL' && 'All Models (' + models.length + ')'}
+              {tab === 'ACTIVE' && 'In VRAM (' + models.filter((m) => m.status === 'LOADED_VRAM').length + ')'}
+              {tab === 'DIFFUSION' &&
+                'Diffusion (' +
+                  models.filter(
+                    (m) =>
+                      m.category.includes('Diffusion') ||
+                      m.category === 'Turbo NVFP4' ||
+                      m.category === 'Inpainting'
+                  ).length +
+                  ')'}
+              {tab === 'LLM' &&
+                'LLM & TE (' +
+                  models.filter(
+                    (m) =>
+                      m.category === 'LLM Text' ||
+                      m.category === 'Vision TE' ||
+                      m.category === 'Document AI'
+                  ).length +
+                  ')'}
             </Text>
           </TouchableOpacity>
         ))}
       </View>
 
       {/* Safetensors Models Inventory Cards */}
-      <View style={styles.modelList}>
+      <View style={[styles.modelList, desktop && styles.modelListDesk]}>
+        {!live || filteredModels.length === 0 ? (
+          <Text style={styles.headerSubtitle}>
+            {live ? 'Controller returned no on-disk or image models.' : 'Probe Spark controller to load the live inventory.'}
+          </Text>
+        ) : null}
         {filteredModels.map((model) => {
           const isExpanded = expandedId === model.id;
           const isLoaded = model.status === 'LOADED_VRAM';
+          const on = isModelEnabled(enabledMap, model.id);
 
           return (
             <View
               key={model.id}
-              style={[styles.modelCard, isLoaded && styles.modelCardLoaded]}
+              style={[
+                styles.modelCard,
+                desktop && styles.modelCardDesk,
+                isLoaded && styles.modelCardLoaded,
+                !on && styles.modelCardOff,
+              ]}
             >
               {/* Card Header Top Row */}
               <TouchableOpacity
@@ -258,9 +411,9 @@ export const ModelStorageSection: React.FC = () => {
               >
                 <View style={styles.cardHeaderLeft}>
                   {isLoaded ? (
-                    <Cpu size={18} color={Colors.brand.emerald} />
+                    <Cpu size={18} color={Colors.brand.green} />
                   ) : (
-                    <Layers size={18} color={Colors.brand.sky} />
+                    <Layers size={18} color={Colors.text.tertiary} />
                   )}
                   <View style={styles.titleWrap}>
                     <View style={styles.badgeRow}>
@@ -299,19 +452,57 @@ export const ModelStorageSection: React.FC = () => {
                   <View
                     style={[
                       styles.statusDot,
-                      { backgroundColor: isLoaded ? Colors.brand.emerald : '#0EA5E9' },
+                      {
+                        backgroundColor: !on
+                          ? Colors.brand.rose
+                          : isLoaded
+                          ? Colors.brand.green
+                          : Colors.text.tertiary,
+                      },
                     ]}
                   />
                   <Text
                     style={[
                       styles.statusLabel,
-                      { color: isLoaded ? Colors.brand.emerald : '#0EA5E9' },
+                      {
+                        color: !on
+                          ? Colors.brand.rose
+                          : isLoaded
+                          ? Colors.brand.green
+                          : Colors.text.tertiary,
+                      },
                     ]}
                   >
-                    {isLoaded ? 'ACTIVE IN UNIFIED VRAM' : 'WARM NVMe CACHE'}
+                    {!on ? 'DISABLED' : isLoaded ? 'ACTIVE IN UNIFIED VRAM' : 'WARM NVMe CACHE'}
                   </Text>
                 </View>
-                <Text style={styles.filenameTag}>📄 {model.filename}</Text>
+                <TouchableOpacity
+                  style={[
+                    styles.enablePill,
+                    on ? (isLoaded ? styles.enablePillReady : styles.enablePillOn) : styles.enablePillOff,
+                  ]}
+                  onPress={() => {
+                    try {
+                      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                    } catch {}
+                    void setEnabled(model.id, !on);
+                  }}
+                  activeOpacity={0.8}
+                  accessibilityLabel={(on ? 'Disable ' : 'Enable ') + model.name}
+                >
+                  <Text
+                    style={[
+                      styles.enablePillText,
+                      on
+                        ? isLoaded
+                          ? styles.enablePillTextReady
+                          : styles.enablePillTextOn
+                        : styles.enablePillTextOff,
+                    ]}
+                  >
+                    {on ? 'ON' : 'OFF'}
+                  </Text>
+                </TouchableOpacity>
               </View>
 
               {/* Expanded Inspection Panel */}
@@ -379,9 +570,9 @@ const styles = StyleSheet.create({
     marginTop: 2,
   },
   nvmePill: {
-    backgroundColor: 'rgba(59, 130, 246, 0.15)',
+    backgroundColor: Colors.brand.greenDim,
     borderWidth: 1,
-    borderColor: 'rgba(59, 130, 246, 0.3)',
+    borderColor: Colors.brand.greenGlow,
     paddingHorizontal: 8,
     paddingVertical: 4,
     borderRadius: 6,
@@ -389,7 +580,14 @@ const styles = StyleSheet.create({
   nvmePillText: {
     fontSize: 10.5,
     fontWeight: '800',
-    color: '#3B82F6',
+    color: Colors.brand.green,
+  },
+  nvmePillDown: {
+    backgroundColor: 'rgba(244, 63, 94, 0.12)',
+    borderColor: 'rgba(244, 63, 94, 0.4)',
+  },
+  nvmePillTextDown: {
+    color: Colors.brand.rose,
   },
   storageCard: {
     backgroundColor: Colors.background.surface,
@@ -440,6 +638,9 @@ const styles = StyleSheet.create({
     gap: 8,
     marginBottom: 14,
   },
+  filterRowWrap: {
+    flexWrap: 'wrap',
+  },
   filterChip: {
     backgroundColor: Colors.background.surfaceElevated,
     borderWidth: 1,
@@ -464,6 +665,14 @@ const styles = StyleSheet.create({
   modelList: {
     gap: 10,
   },
+  modelListDesk: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+  },
+  modelCardDesk: {
+    width: '48.8%',
+    flexGrow: 1,
+  },
   modelCard: {
     backgroundColor: Colors.background.surface,
     borderWidth: 1,
@@ -472,9 +681,41 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
   },
   modelCardLoaded: {
-    borderColor: 'rgba(59, 130, 246, 0.4)',
-    backgroundColor: 'rgba(59, 130, 246, 0.03)',
+    borderColor: Colors.brand.greenGlow,
+    backgroundColor: 'rgba(16, 185, 129, 0.06)',
   },
+  modelCardOff: {
+    opacity: 0.55,
+    borderColor: 'rgba(244, 63, 94, 0.35)',
+  },
+  enablePill: {
+    minWidth: 48,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 999,
+    borderWidth: 1,
+    alignItems: 'center',
+  },
+  enablePillOn: {
+    backgroundColor: 'rgba(59, 130, 246, 0.18)',
+    borderColor: 'rgba(59, 130, 246, 0.45)',
+  },
+  enablePillReady: {
+    backgroundColor: Colors.brand.greenDim,
+    borderColor: Colors.brand.greenGlow,
+  },
+  enablePillOff: {
+    backgroundColor: 'rgba(244, 63, 94, 0.12)',
+    borderColor: 'rgba(244, 63, 94, 0.4)',
+  },
+  enablePillText: {
+    fontSize: 10,
+    fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
+    fontWeight: '800',
+  },
+  enablePillTextOn: { color: Colors.brand.emerald },
+  enablePillTextReady: { color: Colors.brand.green },
+  enablePillTextOff: { color: Colors.brand.rose },
   cardHeader: {
     flexDirection: 'row',
     alignItems: 'center',

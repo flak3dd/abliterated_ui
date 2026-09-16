@@ -32,26 +32,26 @@ async function httpCheck(urlStr, timeoutMs = 3000) {
 }
 
 async function bootAllServices() {
-  const memProfile = (process.env.GPU_MEMORY_PROFILE || 'balanced').toLowerCase();
+  const memProfile = (process.env.GPU_MEMORY_PROFILE || 'image-max').toLowerCase();
   const imageMax = memProfile === 'image-max';
   const chatMax = memProfile === 'chat-max';
 
   console.log(`\n${C.bold}======================================================================${C.reset}`);
-  console.log(`   ${C.brightCyan}⚡ BOOTSTRAPPING ALL SERVICES: :7860, :8188, :17325 ⚡${C.reset}`);
+  console.log(`   ${C.brightCyan}⚡ BOOTSTRAPPING ALL SERVICES: :7860, :17325 ⚡${C.reset}`);
   console.log(`   GPU_MEMORY_PROFILE=${memProfile}  (chat-max | balanced | image-max)`);
   console.log(`${C.bold}======================================================================${C.reset}\n`);
 
   if (chatMax) {
-    console.log(`${C.yellow}chat-max: skip ComfyUI so vLLM can use ~0.82 GPU util / 32k ctx.${C.reset}`);
+    console.log(`${C.yellow}chat-max: image bridge idle; vLLM ~0.82 GPU util / 32k ctx.${C.reset}`);
     console.log(`${C.dim}  vLLM flags: --gpu-memory-utilization 0.82 --max-model-len 32768 --enable-prefix-caching --enable-chunked-prefill --kv-cache-dtype fp8 --max-num-seqs 8${C.reset}\n`);
   } else if (imageMax) {
-    console.log(`${C.yellow}image-max: keep Comfy + image bridge; leave vLLM at 0.48 / 16k.${C.reset}\n`);
+    console.log(`${C.yellow}image-max: Diffusers bridge :7860; vLLM 0.48 / 16k / max_num_seqs 8.${C.reset}\n`);
   } else {
-    console.log(`${C.dim}balanced: image bridge + Comfy up; vLLM stays at recipe 0.48 / 16384.${C.reset}\n`);
+    console.log(`${C.dim}balanced: image bridge :7860; vLLM at recipe 0.48 / 16384.${C.reset}\n`);
   }
 
-  // 1. Image Bridge & ComfyUI on DGX Spark (flak3dd)
-  console.log(`${C.cyan}1. Launching Image Bridge (:7860) & ComfyUI (:8188) on DGX Spark...${C.reset}`);
+  // 1. Image Bridge on DGX Spark (flak3dd)
+  console.log(`${C.cyan}1. Launching Image Bridge (:7860) on DGX Spark...${C.reset}`);
 
   const remoteBootScript = `
     set -euo pipefail
@@ -66,29 +66,10 @@ async function bootAllServices() {
         nohup env ABLITERATED_IMAGE_HOST=0.0.0.0 ABLITERATED_IMAGE_PORT=7860 ./serve-spark.sh </dev/null > logs/bridge.log 2>&1 &
         echo "STARTED (PID: $!)"
       else
-        echo "ALREADY RUNNING"
+        echo "ALREADY RUNNING ON :7860"
       fi
     else
       echo "FAILED (Dir not found: $IMG_DIR)"
-    fi
-
-    # B. Launch ComfyUI Graph Engine (:8188) with 0.0.0.0 binding
-    echo -n "  • Starting ComfyUI Graph Engine (:8188)... "
-    COMFY_DIR="/home/flak3dd/ComfyUI"
-    if [ "${chatMax ? '1' : '0'}" = "1" ]; then
-      echo "SKIPPED (GPU_MEMORY_PROFILE=chat-max)"
-    elif [ -d "$COMFY_DIR" ]; then
-      cd "$COMFY_DIR"
-      if ! ss -tlpn 2>/dev/null | grep -q ":8188"; then
-        PY="$COMFY_DIR/.venv/bin/python"
-        [ ! -x "$PY" ] && PY="python3"
-        nohup "$PY" main.py --listen 0.0.0.0 --port 8188 --preview-method auto </dev/null > comfyui.log 2>&1 &
-        echo "STARTED (PID: $!)"
-      else
-        echo "ALREADY RUNNING"
-      fi
-    else
-      echo "FAILED (Dir not found: $COMFY_DIR)"
     fi
   `;
 
@@ -121,9 +102,30 @@ async function bootAllServices() {
     console.log(`${C.yellow}Local controller launch notice:${C.reset} ${err.message}`);
   }
 
-  // 3. Launch Ephemeral Sandbox Runner (:17330)
-  console.log(`\n${C.cyan}3. Launching Sandbox Runner Daemon (:17330)...${C.reset}`);
   const sandboxDir = '/Users/adminuser/abliterated_ui';
+
+  // 3. Launch cloud key proxy (:17332) so local web can reach Abliteration / Featherless
+  console.log(`\n${C.cyan}3. Launching Cloud Key Proxy (:17332)...${C.reset}`);
+  try {
+    const proxyLive = await httpCheck('http://127.0.0.1:17332/health', 800);
+    if (!proxyLive.ok) {
+      const child = spawn('node', ['scripts/cloud-key-proxy.mjs'], {
+        cwd: sandboxDir,
+        env: { ...process.env, CLOUD_PROXY_HOST: '127.0.0.1', CLOUD_PROXY_PORT: '17332' },
+        detached: true,
+        stdio: 'ignore',
+      });
+      child.unref();
+      console.log(`  ${C.green}✔ Cloud key proxy spawned (PID: ${child.pid}) on http://127.0.0.1:17332${C.reset}`);
+    } else {
+      console.log(`  ${C.green}✔ Cloud key proxy already active on http://127.0.0.1:17332${C.reset}`);
+    }
+  } catch (err) {
+    console.log(`${C.yellow}Cloud key proxy launch notice:${C.reset} ${err.message}`);
+  }
+
+  // 4. Launch Ephemeral Sandbox Runner (:17330)
+  console.log(`\n${C.cyan}4. Launching Sandbox Runner Daemon (:17330)...${C.reset}`);
   try {
     const sandboxLive = await httpCheck('http://127.0.0.1:17330/health', 800);
     if (!sandboxLive.ok) {
@@ -142,14 +144,14 @@ async function bootAllServices() {
     console.log(`${C.yellow}Sandbox runner launch notice:${C.reset} ${err.message}`);
   }
 
-  // 4. Verification Poll
-  console.log(`\n${C.bold}4. Verifying All Active Endpoints (Polling for readiness)...${C.reset}`);
+  // 5. Verification Poll
+  console.log(`\n${C.bold}5. Verifying All Active Endpoints (Polling for readiness)...${C.reset}`);
 
   const checks = [
     { name: 'Image Bridge (:7860)', url: 'http://192.168.4.103:7860/health', altUrl: 'http://100.94.45.77:7860/health' },
-    { name: 'ComfyUI (:8188)', url: 'http://192.168.4.103:8188/system_stats', altUrl: 'http://100.94.45.77:8188/system_stats' },
     { name: 'Controller (:17325)', url: 'http://127.0.0.1:17325/api/endpoints', altUrl: 'http://localhost:17325/' },
     { name: 'Sandbox Runner (:17330)', url: 'http://127.0.0.1:17330/health', altUrl: 'http://localhost:17330/health' },
+    { name: 'Cloud Key Proxy (:17332)', url: 'http://127.0.0.1:17332/health', altUrl: 'http://localhost:17332/health' },
     { name: 'vLLM LLM (:8000)', url: 'http://192.168.4.103:8000/v1/models', altUrl: 'http://100.94.45.77:8000/v1/models' },
     { name: 'Gateway (:8080)', url: 'http://127.0.0.1:8080/v1/models', altUrl: 'http://localhost:8080/v1/models' },
   ];

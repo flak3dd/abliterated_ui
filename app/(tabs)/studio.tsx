@@ -34,11 +34,11 @@ import {
   FlaskConical,
   Eye,
   Layers,
-  Expand,
-  Shrink,
 } from 'lucide-react-native';
 import Colors from '../../theme/colors';
+import { isDesktopWeb, WEB_SHELL } from '../../theme/layout';
 import { useStudioStore } from '../../stores/useStudioStore';
+import { useMeshStore } from '../../stores/useMeshStore';
 import { HeaderBar } from '../../components/ui/HeaderBar';
 import { DrawerMenu } from '../../components/ui/DrawerMenu';
 import { DesktopSidebar } from '../../components/ui/DesktopSidebar';
@@ -46,8 +46,11 @@ import { EnvironmentModal } from '../../components/chat/EnvironmentModal';
 import { TouchInpaintCanvas } from '../../components/studio/TouchInpaintCanvas';
 import { AspectRatioPicker } from '../../components/studio/AspectRatioPicker';
 import { ModelPicker, SPARK_IMAGE_MODELS } from '../../components/studio/ModelPicker';
+import { LoadWeightsBar } from '../../components/studio/LoadWeightsBar';
+import { isImagePipeLoaded } from '../../services/modelCatalog';
 import { BrushSizeSlider } from '../../components/studio/BrushSizeSlider';
 import { Toast } from '../../components/ui/Toast';
+import { ImageDebugFeed } from '../../components/studio/ImageDebugFeed';
 import { dataUrlToRawBase64, extensionForImageUri, uriToDataUrl } from '../../services/kreaService';
 
 function formatElapsed(sec: number): string {
@@ -66,7 +69,7 @@ const PRESET_IDEAS = [
 
 export default function StudioScreen() {
   const { width } = useWindowDimensions();
-  const isDesktop = Platform.OS === 'web' && width >= 900;
+  const isDesktop = isDesktopWeb(width);
 
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
@@ -121,8 +124,14 @@ export default function StudioScreen() {
     modelAvailability,
     loadedModelId,
     warmingModelId,
+    modelSwitchError,
     clearHistory,
   } = useStudioStore();
+  const telemetry = useMeshStore((s) => s.telemetry);
+  const telemetrySource = useMeshStore((s) => s.telemetrySource);
+  const currentModelObj = SPARK_IMAGE_MODELS.find((m) => m.id === selectedModel);
+  const weightsReady = isImagePipeLoaded(selectedModel, loadedModelId, modelAvailability);
+  const canGenerate = !isGenerating && !warmingModelId && weightsReady && Boolean(prompt.trim());
 
   useEffect(() => {
     void refreshImageModels();
@@ -159,7 +168,7 @@ export default function StudioScreen() {
       const handleKeyDown = (e: KeyboardEvent) => {
         if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
           e.preventDefault();
-          if (!isGenerating && prompt.trim()) {
+          if (canGenerate) {
             handleGenerate();
           }
         } else if (e.key === 'Escape' && isCanvasExpanded) {
@@ -172,7 +181,7 @@ export default function StudioScreen() {
       window.addEventListener('keydown', handleKeyDown);
       return () => window.removeEventListener('keydown', handleKeyDown);
     }
-  }, [prompt, isGenerating, isCanvasExpanded, handleGenerate, showToast]);
+  }, [canGenerate, isCanvasExpanded, handleGenerate, showToast]);
 
   const handlePickImage = async () => {
     try {
@@ -331,8 +340,6 @@ export default function StudioScreen() {
     showToast('Seed randomized: ' + newSeed);
   };
 
-  const currentModelObj = SPARK_IMAGE_MODELS.find((m) => m.id === selectedModel);
-
   const toggleExpandCanvas = () => {
     const nextExpanded = !isCanvasExpanded;
     setIsCanvasExpanded(nextExpanded);
@@ -376,30 +383,16 @@ export default function StudioScreen() {
                 <View style={styles.activeEngineDot} />
                 <Text style={styles.subBarTitle}>CREATIVE DIFFUSION WORKSTATION</Text>
                 <Text style={styles.subBarSep}>•</Text>
-                <Text style={styles.subBarSpecs}>GB10 · 128 GB unified LPDDR5x</Text>
+                <Text style={styles.subBarSpecs}>
+                  {telemetrySource === 'live'
+                    ? telemetry.gpuModel
+                    : telemetrySource === 'unavailable'
+                    ? 'Spark telemetry down · :17325/:7860'
+                    : 'Waiting for live GPU'}
+                </Text>
               </View>
 
               <View style={styles.subBarRight}>
-                <TouchableOpacity
-                  style={[styles.stageExpandBtn, isCanvasExpanded && styles.stageExpandBtnActive]}
-                  onPress={toggleExpandCanvas}
-                  activeOpacity={0.75}
-                >
-                  {isCanvasExpanded ? (
-                    <>
-                      <Shrink size={13} color="#09090B" />
-                      <Text style={[styles.stageExpandText, styles.stageExpandTextActive]}>
-                        Standard Stage
-                      </Text>
-                    </>
-                  ) : (
-                    <>
-                      <Expand size={13} color={Colors.brand.emerald} />
-                      <Text style={styles.stageExpandText}>Expand Canvas</Text>
-                    </>
-                  )}
-                </TouchableOpacity>
-
                 <TouchableOpacity
                   style={[styles.historyToggleBtn, isHistoryOpen && styles.historyToggleBtnActive]}
                   onPress={() => toggleHistoryOpen()}
@@ -524,12 +517,16 @@ export default function StudioScreen() {
                   <ModelPicker
                     selected={selectedModel}
                     onSelect={setSelectedModel}
-                    disabled={isGenerating}
+                    disabled={isGenerating || Boolean(warmingModelId)}
                     isGrid={true}
                     availability={modelAvailability}
                     warmingId={warmingModelId}
                     loadedId={loadedModelId}
                   />
+                  <LoadWeightsBar />
+                  {modelSwitchError ? (
+                    <Text style={styles.pipeError}>{modelSwitchError}</Text>
+                  ) : null}
                 </View>
 
                 {/* 4. Advanced Generation Parameters Accordion */}
@@ -568,7 +565,7 @@ export default function StudioScreen() {
                           <Text style={styles.stepperVal}>{steps}</Text>
                           <TouchableOpacity
                             style={styles.stepBtn}
-                            onPress={() => setSteps(Math.min(50, steps + 4))}
+                            onPress={() => setSteps(Math.min(80, steps + 4))}
                           >
                             <Text style={styles.stepBtnText}>+</Text>
                           </TouchableOpacity>
@@ -688,9 +685,9 @@ export default function StudioScreen() {
                 {/* 6. Big Radiant Synthesis CTA */}
                 <View style={styles.ctaWrapper}>
                   <TouchableOpacity
-                    style={[styles.primaryGenerateBtn, isGenerating && styles.primaryGenerateBtnDisabled]}
+                    style={[styles.primaryGenerateBtn, !canGenerate && styles.primaryGenerateBtnDisabled]}
                     onPress={handleGenerate}
-                    disabled={isGenerating || !prompt.trim()}
+                    disabled={!canGenerate}
                     activeOpacity={0.8}
                   >
                     {isGenerating ? (
@@ -712,13 +709,16 @@ export default function StudioScreen() {
                       <View style={styles.btnContentRow}>
                         <Sparkles size={18} color="#09090B" />
                         <Text style={styles.primaryGenerateBtnText}>
-                          {maskPaths.length > 0 ? 'Inpaint with ' : 'Synthesize with '}
-                          {currentModelObj?.name || 'Krea 2 RAW'}
+                          {!weightsReady
+                            ? 'Load weights to generate'
+                            : (maskPaths.length > 0 ? 'Inpaint with ' : 'Synthesize with ') +
+                              (currentModelObj?.name || 'Krea 2 RAW')}
                         </Text>
                         <Text style={styles.kbdHint}>⌘↵</Text>
                       </View>
                     )}
                   </TouchableOpacity>
+                  <ImageDebugFeed />
                 </View>
               </ScrollView>
             )}
@@ -930,11 +930,12 @@ export default function StudioScreen() {
                 <ModelPicker
                   selected={selectedModel}
                   onSelect={setSelectedModel}
-                  disabled={isGenerating}
+                  disabled={isGenerating || Boolean(warmingModelId)}
                   availability={modelAvailability}
                   warmingId={warmingModelId}
                   loadedId={loadedModelId}
                 />
+                <LoadWeightsBar compact />
               </View>
 
               {/* Aspect Ratio Selector */}
@@ -994,9 +995,9 @@ export default function StudioScreen() {
               {/* Primary Action Buttons */}
               <View style={styles.actionRow}>
                 <TouchableOpacity
-                  style={[styles.generateBtn, isGenerating && styles.generateBtnDisabled]}
+                  style={[styles.generateBtn, !canGenerate && styles.generateBtnDisabled]}
                   onPress={handleGenerate}
-                  disabled={isGenerating || !prompt.trim()}
+                  disabled={!canGenerate}
                   activeOpacity={0.8}
                 >
                   {isGenerating ? (
@@ -1013,7 +1014,11 @@ export default function StudioScreen() {
                     <>
                       <Sparkles size={18} color="#09090B" />
                       <Text style={styles.generateBtnText}>
-                        {maskPaths.length > 0 ? 'Inpaint with ' + (currentModelObj?.name || 'Krea 2') : 'Generate with ' + (currentModelObj?.name || 'Krea 2')}
+                        {!weightsReady
+                          ? 'Load weights to generate'
+                          : maskPaths.length > 0
+                          ? 'Inpaint with ' + (currentModelObj?.name || 'Krea 2')
+                          : 'Generate with ' + (currentModelObj?.name || 'Krea 2')}
                       </Text>
                     </>
                   )}
@@ -1029,6 +1034,8 @@ export default function StudioScreen() {
                   </TouchableOpacity>
                 )}
               </View>
+
+              <ImageDebugFeed />
 
               {/* Recent Creations History */}
               {history.length > 0 && (
@@ -1089,16 +1096,21 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#08080B',
+    ...WEB_SHELL,
   },
   appRow: {
     flex: 1,
     flexDirection: 'row',
+    minHeight: 0,
+    minWidth: 0,
   },
   mainWorkspace: {
     flex: 1,
     display: 'flex',
     flexDirection: 'column',
     overflow: 'hidden',
+    minHeight: 0,
+    minWidth: 0,
   },
 
   // Desktop Sub Bar
@@ -1194,17 +1206,27 @@ const styles = StyleSheet.create({
     flex: 1,
     flexDirection: 'row',
     overflow: 'hidden',
+    minHeight: 0,
+    minWidth: 0,
   },
   inspectorScroll: {
-    width: 390,
+    width: 360,
+    maxWidth: '32%',
     borderRightWidth: 1,
     borderRightColor: 'rgba(255, 255, 255, 0.08)',
     backgroundColor: '#0a0a0e',
+    minHeight: 0,
   },
   inspectorContent: {
     padding: 16,
     gap: 16,
     paddingBottom: 40,
+  },
+  pipeError: {
+    marginTop: 10,
+    fontSize: 12,
+    color: Colors.brand.rose,
+    lineHeight: 16,
   },
   cardSection: {
     backgroundColor: 'rgba(18, 18, 22, 0.75)',

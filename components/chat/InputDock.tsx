@@ -6,14 +6,22 @@ import {
   TouchableOpacity,
   View,
   Platform,
+  useWindowDimensions,
 } from 'react-native';
 import { useRouter } from 'expo-router';
-import { Mic, ArrowUp, Square, ShieldCheck, Zap, BookOpen } from 'lucide-react-native';
+import { Mic, ArrowUp, Square, ShieldCheck, Zap, BookOpen, Terminal, Bot } from 'lucide-react-native';
 import * as Haptics from 'expo-haptics';
 import Colors from '../../theme/colors';
 import { useChatStore } from '../../stores/useChatStore';
 import { useSwarmStore } from '../../stores/useSwarmStore';
+import { useAgentStore } from '../../stores/useAgentStore';
+import { useMeshStore } from '../../stores/useMeshStore';
+import { agentGateHint } from '../../services/agent/gate';
 import { useRagStore } from '../../stores/useRagStore';
+import { useMatrixStore } from '../../stores/useMatrixStore';
+import { ModelSelector } from '../models/ModelSelector';
+import { SuggestionStrip } from './SuggestionStrip';
+import { isDesktopWeb } from '../../theme/layout';
 import Animated, {
   useSharedValue,
   useAnimatedStyle,
@@ -35,10 +43,17 @@ export const InputDock: React.FC<InputDockProps> = ({
   disabled = false,
 }) => {
   const router = useRouter();
+  const { width } = useWindowDimensions();
+  const isDesktop = isDesktopWeb(width);
   const [inputText, setInputText] = useState('');
   const { antiHallucination, toggleAntiHallucination } = useChatStore();
-  const { isSwarmMode, toggleSwarmMode } = useSwarmStore();
+  const { isSwarmMode, setSwarmMode } = useSwarmStore();
+  const { isAgentMode, setAgentMode } = useAgentStore();
   const { enabled: ragEnabled, chunks, toggleEnabled: toggleRag } = useRagStore();
+  const setMatrixOpen = useMatrixStore((s) => s.setIsOpen);
+  const meshMode = useMeshStore((s) => s.meshMode);
+  const hasActiveEnv = useChatStore((s) => Boolean(s.getActiveEnvironment()));
+  const agentHint = agentGateHint({ isAgentMode, meshMode, hasActiveEnv });
   
   // Animations
   const sendButtonScale = useSharedValue(0.8);
@@ -101,8 +116,13 @@ export const InputDock: React.FC<InputDockProps> = ({
 
   return (
     <View style={styles.dockContainer}>
+      <SuggestionStrip
+        draft={inputText}
+        onSelectPrompt={setInputText}
+        disabled={disabled || isStreaming}
+        mode={isAgentMode ? 'agent' : isSwarmMode ? 'swarm' : 'chat'}
+      />
       <View style={styles.glassPill}>
-        {/* Voice Mode Button */}
         <TouchableOpacity
           style={styles.micButton}
           onPress={handleVoicePress}
@@ -115,7 +135,13 @@ export const InputDock: React.FC<InputDockProps> = ({
         {/* Text Input Field */}
         <TextInput
           style={styles.textInput}
-          placeholder={isSwarmMode ? "Swarm Task (e.g. Build asynchronous cache manager with redis and pytest)..." : "Ask Spark AI (e.g. Write a Python rate limiter with pytest suite)..."}
+          placeholder={
+            isAgentMode
+              ? 'BUILD agent goal (e.g. Create fib.py + pytest suite and fix until green)...'
+              : isSwarmMode
+              ? 'Swarm Task (e.g. Build asynchronous cache manager with redis and pytest)...'
+              : 'Ask Spark AI (e.g. Write a Python rate limiter with pytest suite)...'
+          }
           placeholderTextColor="rgba(255,255,255,0.4)"
           value={inputText}
           onChangeText={setInputText}
@@ -151,16 +177,71 @@ export const InputDock: React.FC<InputDockProps> = ({
             </TouchableOpacity>
           </Animated.View>
         )}
+
+        <TouchableOpacity
+          style={styles.blingCircle}
+          onPress={() => {
+            try {
+              Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+            } catch (e) {}
+            setMatrixOpen(true);
+          }}
+          accessibilityLabel="BLINGbling matrix"
+          hitSlop={{ top: 4, bottom: 4, left: 4, right: 4 }}
+          activeOpacity={0.75}
+        >
+          <Terminal size={14} color={Colors.brand.sky} />
+        </TouchableOpacity>
       </View>
 
-      {/* Desktop Keyboard, Sandbox Hint & Swarm/Anti-Hallucination Toggles */}
-      {Platform.OS === 'web' && (
-        <View style={styles.desktopHintRow}>
-          <Text style={styles.desktopHintText}>
-            <Text style={{ fontWeight: '700' }}>Enter</Text> to send • <Text style={{ fontWeight: '700' }}>Shift+Enter</Text> for newline
-          </Text>
+      {/* Keyboard hint (web) + Agent/Swarm/RAG toggles (all platforms) */}
+      <View style={styles.desktopHintRow}>
+          {Platform.OS === 'web' ? (
+            <Text style={styles.desktopHintText}>
+              <Text style={{ fontWeight: '700' }}>Enter</Text> to send • <Text style={{ fontWeight: '700' }}>Shift+Enter</Text> for newline
+              {agentHint ? (
+                <Text style={styles.agentHintText}>
+                  {'  ·  '}
+                  {agentHint}
+                </Text>
+              ) : null}
+            </Text>
+          ) : (
+            <Text style={styles.desktopHintText}>
+              {agentHint || (isAgentMode ? 'Agent: BUILD' : ' ')}
+            </Text>
+          )}
 
           <View style={styles.dockRightControls}>
+            <TouchableOpacity
+              style={[
+                styles.swarmPill,
+                isAgentMode && styles.swarmPillActive,
+                isAgentMode && agentHint && agentHint.includes('needs') && styles.swarmPillWarn,
+              ]}
+              accessibilityLabel="Toggle BUILD agent"
+              accessibilityHint="When enabled on Spark mesh with a sandbox, messages run the BUILD tool-loop agent instead of normal chat."
+              onPress={() => {
+                try {
+                  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+                } catch (e) {}
+                const next = !isAgentMode;
+                setAgentMode(next);
+                if (next) setSwarmMode(false);
+              }}
+              activeOpacity={0.75}
+            >
+              <Bot size={11} color={isAgentMode ? Colors.brand.emerald : '#71717A'} />
+              <Text
+                style={[
+                  styles.swarmPillText,
+                  isAgentMode && styles.swarmPillTextActive,
+                ]}
+              >
+                {isAgentMode ? 'Agent: BUILD' : 'Agent: OFF'}
+              </Text>
+            </TouchableOpacity>
+
             <TouchableOpacity
               style={[
                 styles.swarmPill,
@@ -172,7 +253,9 @@ export const InputDock: React.FC<InputDockProps> = ({
                 try {
                   Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
                 } catch (e) {}
-                toggleSwarmMode();
+                const turningOn = !isSwarmMode;
+                setSwarmMode(turningOn);
+                if (turningOn) setAgentMode(false);
               }}
               activeOpacity={0.75}
             >
@@ -189,6 +272,8 @@ export const InputDock: React.FC<InputDockProps> = ({
                 {isSwarmMode ? 'Swarm: AUTO' : 'Swarm: OFF'}
               </Text>
             </TouchableOpacity>
+
+            {!isDesktop ? <ModelSelector lane="chat" variant="trigger" /> : null}
 
             <TouchableOpacity
               style={[styles.antiHallucinationPill, ragEnabled && styles.antiHallucinationPillActive]}
@@ -238,8 +323,7 @@ export const InputDock: React.FC<InputDockProps> = ({
               </Text>
             </TouchableOpacity>
           </View>
-        </View>
-      )}
+      </View>
     </View>
   );
 };
@@ -248,14 +332,14 @@ const styles = StyleSheet.create({
   dockContainer: {
     paddingHorizontal: 16,
     paddingTop: 8,
-    paddingBottom: Platform.OS === 'ios' ? 24 : 12,
+    paddingBottom: Platform.OS === 'web' ? 10 : Platform.OS === 'ios' ? 24 : 12,
     backgroundColor: 'transparent',
     alignItems: 'center',
     width: '100%',
   },
   glassPill: {
     flexDirection: 'row',
-    alignItems: 'flex-end',
+    alignItems: 'center',
     backgroundColor: 'rgba(18, 18, 22, 0.85)',
     borderRadius: 24,
     borderWidth: 1,
@@ -270,6 +354,17 @@ const styles = StyleSheet.create({
     shadowRadius: 16,
     elevation: 10,
   },
+  blingCircle: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    marginLeft: 2,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(56, 189, 248, 0.12)',
+    borderWidth: 1,
+    borderColor: 'rgba(56, 189, 248, 0.4)',
+  },
   micButton: {
     width: 36,
     height: 36,
@@ -277,7 +372,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: 'rgba(255, 255, 255, 0.05)',
-    marginBottom: 2,
   },
   textInput: {
     flex: 1,
@@ -324,6 +418,8 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
+    flexWrap: 'wrap',
+    gap: 8,
     width: '100%',
     maxWidth: 860,
     paddingHorizontal: 4,
@@ -352,6 +448,16 @@ const styles = StyleSheet.create({
   swarmPillActive: {
     backgroundColor: 'rgba(59, 130, 246, 0.16)',
     borderColor: 'rgba(59, 130, 246, 0.4)',
+  },
+  swarmPillWarn: {
+    backgroundColor: 'rgba(245, 158, 11, 0.14)',
+    borderColor: 'rgba(245, 158, 11, 0.45)',
+  },
+  agentHintText: {
+    fontSize: 10.5,
+    color: Colors.brand.amber,
+    fontFamily: 'Menlo',
+    fontWeight: '600',
   },
   swarmPillText: {
     fontSize: 9.5,
@@ -387,5 +493,32 @@ const styles = StyleSheet.create({
   antiHallucinationPillTextActive: {
     color: Colors.brand.emerald,
     fontWeight: '700',
+  },
+  tierRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
+  tierPill: {
+    paddingHorizontal: 6,
+    paddingVertical: 3,
+    borderRadius: 5,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.08)',
+    backgroundColor: 'rgba(255, 255, 255, 0.04)',
+  },
+  tierPillActive: {
+    borderColor: 'rgba(16, 185, 129, 0.45)',
+    backgroundColor: 'rgba(16, 185, 129, 0.14)',
+  },
+  tierPillText: {
+    fontSize: 9,
+    fontFamily: 'Menlo',
+    color: '#71717A',
+    fontWeight: '600',
+  },
+  tierPillTextActive: {
+    color: Colors.brand.emerald,
+    fontWeight: '800',
   },
 });

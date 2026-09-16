@@ -39,10 +39,11 @@
     "build:web": "expo export -p web && cp -f vercel.json dist/vercel.json && echo '/* /index.html 200' > dist/_redirects",
     "preflight": "node ./scripts/preflight.mjs",
     "agent": "node ./scripts/spark-agent.mjs",
-    "start-services": "node ./scripts/start-services.mjs",
+    "start-services": "GPU_MEMORY_PROFILE=image-max node ./scripts/start-services.mjs",
     "start-services:chat-max": "GPU_MEMORY_PROFILE=chat-max node ./scripts/start-services.mjs",
     "start-services:image-max": "GPU_MEMORY_PROFILE=image-max node ./scripts/start-services.mjs",
     "sandbox": "node ./scripts/sandbox-runner.mjs",
+    "cloud-proxy": "node ./scripts/cloud-key-proxy.mjs",
     "test-ssh": "node ./scripts/test-ssh.mjs",
     "test-controller": "node ./scripts/test-controller.mjs",
     "test-tailscale": "node ./scripts/test-tailscale.mjs",
@@ -50,9 +51,12 @@
     "test-stream": "node ./scripts/test-stream-chunks.mjs",
     "audit-image": "node ./scripts/audit-image.mjs",
     "test-rag": "node ./scripts/test-rag.mjs",
+    "test-model-resolve": "node ./scripts/test-model-resolve.mjs",
+    "test-mesh-routing": "node ./scripts/test-mesh-routing.mjs",
     "build-rag-dataset": "node ./scripts/build-rag-dataset.mjs",
     "check-qwen": "node ./scripts/check-qwen.mjs",
-    "check-gpu": "node ./scripts/check-gpu.mjs"
+    "check-gpu": "node ./scripts/check-gpu.mjs",
+    "test-agent": "node ./scripts/test-agent.mjs"
   },
   "private": true
 }
