@@ -5,7 +5,11 @@ import {
   runSandboxTests,
   buildSandbox,
   executeSandboxCommand,
+  serveSandboxApp,
+  runSandboxBrowserTest,
+  sandboxPreviewAbsoluteUrl,
 } from '../sandboxService';
+import { runVisionHealRound, formatHealBrief } from './visionHeal';
 
 export const TOOL_RESULT_CAP = 4000;
 export const FILE_READ_CAP = 8000;
@@ -208,6 +212,71 @@ export const AGENT_TOOL_SCHEMAS = [
       },
     },
   },
+    {
+    type: 'function',
+    function: {
+      name: 'vision_heal',
+      description:
+        'Capture headed browser screenshot, critique with vision/LayoutLMv3, return visual issues + fix hints. Iterate: edit files then call again until PASS.',
+      parameters: {
+        type: 'object',
+        properties: {
+          goal: { type: 'string' },
+          url: { type: 'string' },
+          round: { type: 'number' },
+        },
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'pty_session',
+      description:
+        'Open or query interactive PTY on sandbox runner (ws /api/sandbox/pty) for interactive CLIs.',
+      parameters: {
+        type: 'object',
+        properties: {
+          action: { type: 'string', description: 'status | hint' },
+        },
+        additionalProperties: false,
+      },
+    },
+  },
+{
+    type: 'function',
+    function: {
+      name: 'serve_app',
+      description:
+        'Start (or reuse) a persistent sandbox dev server and return a preview URL on the sandbox runner reverse-proxy. Optional command/port.',
+      parameters: {
+        type: 'object',
+        properties: {
+          command: { type: 'string', description: 'optional serve command; __PORT__ placeholder supported' },
+          port: { type: 'number' },
+          action: { type: 'string', description: 'start | stop | status (default start)' },
+        },
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'browser_test',
+      description:
+        'Run a headed Playwright browser test against a URL or the live preview (screenshot + video/trace artifacts). Prefer after serve_app.',
+      parameters: {
+        type: 'object',
+        properties: {
+          url: { type: 'string', description: 'absolute URL or runner preview path; defaults to live serve preview' },
+          headed: { type: 'boolean', description: 'default true on Mac; Linux uses Xvfb when available' },
+        },
+        additionalProperties: false,
+      },
+    },
+  },
   {
     type: 'function',
     function: {
@@ -263,6 +332,8 @@ export type AgentToolResult = {
   text: string;
   testPassed?: boolean;
   buildOk?: boolean;
+  browserTestOk?: boolean;
+  previewUrl?: string;
   /** Hint for loop manifest / gates */
   meta?: {
     path?: string;
@@ -590,6 +661,130 @@ export async function executeAgentTool(
       tool,
       text: `build exit ${report.exitCode}\n${cap(report.output || '')}`,
       buildOk: report.success,
+    };
+  }
+
+
+
+  if (tool === 'vision_heal') {
+    const live = ctx.getEnv();
+    if (!live) return { ok: false, tool, text: 'No env.' };
+    const goal = String(rawArgs.goal || 'Match the requested UI polish and accessibility.');
+    const round = Number(rawArgs.round) || 1;
+    const url = rawArgs.url ? String(rawArgs.url) : undefined;
+    try {
+      const result = await runVisionHealRound({
+        envId: env.id,
+        target: ctx.target,
+        goal,
+        url,
+        round,
+      });
+      return {
+        ok: result.ok,
+        tool,
+        text: formatHealBrief(result),
+        browserTestOk: result.ok,
+        testPassed: result.ok ? true : undefined,
+      };
+    } catch (e: any) {
+      return { ok: false, tool, text: e?.message || 'vision_heal failed' };
+    }
+  }
+
+  if (tool === 'pty_session') {
+    try {
+      const res = await fetch('http://127.0.0.1:17330/api/sandbox/pty/status', {
+        signal: AbortSignal.timeout(5000),
+      });
+      const data = await res.json();
+      const action = String(rawArgs.action || 'status');
+      if (action === 'hint') {
+        return {
+          ok: Boolean(data.available),
+          tool,
+          text: data.available
+            ? `PTY ready. Connect WebSocket to ws://127.0.0.1:17330/api/sandbox/pty?envId=${env.id} (xterm in chat). Write interactive prompts via the PTY bubble.`
+            : 'PTY unavailable. On Mac: npm i node-pty ws && restart sandbox runner.',
+        };
+      }
+      return {
+        ok: true,
+        tool,
+        text: JSON.stringify(data, null, 2),
+      };
+    } catch (e: any) {
+      return { ok: false, tool, text: e?.message || 'pty status failed' };
+    }
+  }
+
+  if (tool === 'serve_app') {
+    const live = ctx.getEnv();
+    if (!live) return { ok: false, tool, text: 'No env.' };
+    try {
+      await materializeSandbox(live, ctx.target);
+    } catch (e: any) {
+      return { ok: false, tool, text: e?.message || 'materialize failed' };
+    }
+    const action = String(rawArgs.action || 'start').toLowerCase() as 'start' | 'stop' | 'status';
+    const result = await serveSandboxApp(env.id, ctx.target, {
+      command: rawArgs.command ? String(rawArgs.command) : undefined,
+      port: rawArgs.port != null ? Number(rawArgs.port) : undefined,
+      action,
+    });
+    if (!result.ok) {
+      return { ok: false, tool, text: result.error || 'serve_app failed' };
+    }
+    const abs = sandboxPreviewAbsoluteUrl(result.previewUrl) || result.previewUrl || '';
+    try {
+      const { useSandboxStore } = require('../../stores/useSandboxStore');
+      const s = useSandboxStore.getState();
+      if (abs) {
+        s.setDrawerOpen(true);
+        s.setDrawerTab('preview');
+        // @ts-ignore
+        useSandboxStore.setState({ webPreviewUrl: abs });
+      }
+    } catch {}
+    return {
+      ok: true,
+      tool,
+      text: `serve ${result.status || 'running'} port=${result.port} pid=${result.pid}\npreview=${abs}\ncommand=${result.command || ''}`,
+      previewUrl: abs || undefined,
+    };
+  }
+
+  if (tool === 'browser_test') {
+    const live = ctx.getEnv();
+    if (!live) return { ok: false, tool, text: 'No env.' };
+    try {
+      await materializeSandbox(live, ctx.target);
+    } catch (e: any) {
+      return { ok: false, tool, text: e?.message || 'materialize failed' };
+    }
+    const url = rawArgs.url ? String(rawArgs.url) : undefined;
+    const headed = rawArgs.headed == null ? true : Boolean(rawArgs.headed);
+    const result = await runSandboxBrowserTest(env.id, ctx.target, { url, headed });
+    if (!result.ok) {
+      return {
+        ok: false,
+        tool,
+        text: `${result.error || 'browser_test failed'}${result.hint ? '\n' + result.hint : ''}`,
+        browserTestOk: false,
+      };
+    }
+    return {
+      ok: true,
+      tool,
+      text: [
+        `browser_test OK headed=${result.headed} status=${result.status} title=${result.title}`,
+        `url=${result.url}`,
+        `screenshot=${result.artifacts?.screenshot || 'n/a'}`,
+        `video=${result.artifacts?.video || 'n/a'}`,
+        `trace=${result.artifacts?.trace || 'n/a'}`,
+      ].join('\n'),
+      browserTestOk: true,
+      testPassed: true,
     };
   }
 

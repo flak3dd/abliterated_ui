@@ -22,6 +22,12 @@ import { MatrixModal } from '../../components/matrix/MatrixModal';
 import { MatrixCanvasView } from '../../components/matrix/MatrixCanvasView';
 import { ChatBubble } from '../../components/chat/ChatBubble';
 import { InputDock } from '../../components/chat/InputDock';
+import { DiagnosticsStrip } from '../../components/chat/DiagnosticsStrip';
+import { SessionToolsBar } from '../../components/chat/SessionToolsBar';
+import { useChatExtrasStore } from '../../stores/useChatExtrasStore';
+import { filterMessagesByQuery } from '../../services/chatEnhancements';
+import { subscribeSandboxEvents } from '../../services/sandboxEvents';
+import { PtyTerminalBubble } from '../../components/chat/PtyTerminalBubble';
 import { useMatrixStore } from '../../stores/useMatrixStore';
 import { isDesktopWeb, WEB_SHELL } from '../../theme/layout';
 
@@ -34,7 +40,7 @@ export default function ChatScreen() {
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
   const [isSandboxPanelOpen, setIsSandboxPanelOpen] = useState(false);
 
-  const { isOpen: isMatrixOpen } = useMatrixStore();
+  const { isOpen: isMatrixOpen, setIsOpen: setMatrixOpen } = useMatrixStore();
   const flatListRef = useRef<FlatList>(null);
 
   const {
@@ -44,12 +50,20 @@ export default function ChatScreen() {
     streamingSessionId,
     sendMessage,
     stopStreaming,
+    retryLastTurn,
+    exportSessionMarkdown,
+    branchSessionFromHere,
   } = useChatStore();
   const sessionStreaming = isStreaming && streamingSessionId === activeSessionId;
 
-  const { status: sandboxStatus } = useSandboxStore();
+  const { status: sandboxStatus, appendLog, setDrawerOpen: setSandboxDrawerOpen, setDrawerTab } = useSandboxStore();
+  const searchQuery = useChatExtrasStore((s) => s.searchQuery);
+  const estimateTokens = useChatExtrasStore((s) => s.estimateTokens);
+  const hydrateExtras = useChatExtrasStore((s) => s.hydrate);
 
   const currentMessages = activeSessionId ? messages[activeSessionId] || [] : [];
+  const visibleMessages = filterMessagesByQuery(currentMessages, searchQuery);
+  const tokenEstimate = estimateTokens(visibleMessages.map((m) => m.content).join('\n'));
 
   // Auto-open desktop sandbox panel when tests or code execution is started on desktop
   useEffect(() => {
@@ -59,6 +73,48 @@ export default function ChatScreen() {
   }, [isDesktop, sandboxStatus]);
 
   useEffect(() => {
+    hydrateExtras();
+  }, [hydrateExtras]);
+
+  useEffect(() => {
+    const unsub = subscribeSandboxEvents((evt: any) => {
+      if (evt?.type && evt.type !== 'hello') {
+        appendLog(`[sse] ${evt.type}${evt.envId ? ' ' + evt.envId : ''}`);
+      }
+      if (evt?.type === 'serve') {
+        const path = evt.previewUrl || (evt.envId ? `/api/sandbox/preview/${encodeURIComponent(String(evt.envId))}/` : null);
+        if (path) {
+          const abs = String(path).startsWith('http') ? String(path) : `http://127.0.0.1:17330${path}`;
+          useSandboxStore.setState({ webPreviewUrl: abs });
+        }
+        setDrawerTab('preview');
+        setSandboxDrawerOpen(true);
+      }
+      if (evt?.type === 'job-result' && evt.needsAttention) {
+        const sid = useChatStore.getState().activeSessionId;
+        if (sid) {
+          const content = `### Job needs attention\n\n\`${evt.jobId}\` status=${evt.status}\n\n\`\`\`\n${(evt.excerpt || '').slice(0, 800)}\n\`\`\``;
+          useChatStore.setState((state) => ({
+            messages: {
+              ...state.messages,
+              [sid]: [
+                ...(state.messages[sid] || []),
+                {
+                  id: 'msg_jobn_' + Date.now(),
+                  role: 'assistant',
+                  content,
+                  timestamp: Date.now(),
+                },
+              ],
+            },
+          }));
+        }
+      }
+    });
+    return unsub;
+  }, [appendLog, setSandboxDrawerOpen, setDrawerTab]);
+
+  useEffect(() => {
     if (currentMessages.length > 0) {
       setTimeout(() => {
         flatListRef.current?.scrollToEnd({ animated: true });
@@ -66,8 +122,8 @@ export default function ChatScreen() {
     }
   }, [currentMessages.length, sessionStreaming]);
 
-  const handleSendMessage = (text: string) => {
-    sendMessage(text);
+  const handleSendMessage = (text: string, attachments?: any) => {
+    sendMessage(text, attachments);
   };
 
   return (
@@ -103,15 +159,21 @@ export default function ChatScreen() {
 
           {/* Centered Column for Desktop Ergonomics */}
           <View style={styles.contentColumn}>
+            <DiagnosticsStrip />
+            <SessionToolsBar
+              tokenEstimate={tokenEstimate}
+              onExport={() => exportSessionMarkdown()}
+              onBranch={() => branchSessionFromHere()}
+            />
             {/* Messages FlatList */}
             <FlatList
               ref={flatListRef}
-              data={currentMessages}
+              data={visibleMessages}
               keyExtractor={(item) => item.id}
               renderItem={({ item, index }) => (
                 <ChatBubble
                   message={item}
-                  isStreaming={sessionStreaming && index === currentMessages.length - 1}
+                  isStreaming={sessionStreaming && index === visibleMessages.length - 1}
                 />
               )}
               contentContainerStyle={styles.messageListContent}
@@ -124,6 +186,7 @@ export default function ChatScreen() {
               onSendMessage={handleSendMessage}
               onStopStreaming={stopStreaming}
               isStreaming={sessionStreaming}
+              onRetryLast={() => retryLastTurn()}
             />
           </View>
         </KeyboardAvoidingView>

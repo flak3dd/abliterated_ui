@@ -8,6 +8,10 @@ export type AgentToolName =
   | 'test'
   | 'build'
   | 'github'
+  | 'serve_app'
+  | 'browser_test'
+  | 'vision_heal'
+  | 'pty_session'
   | 'set_plan'
   | 'update_task';
 
@@ -46,6 +50,8 @@ export interface AgentArtifacts {
   lastBuildOk?: boolean;
   lastTestAt?: number;
   lastBuildAt?: number;
+  lastBrowserTestOk?: boolean;
+  lastServePreviewUrl?: string;
 }
 
 export interface AgentCompactMeta {

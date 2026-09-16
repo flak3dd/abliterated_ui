@@ -541,3 +541,95 @@ function simulateTestRun(
     exitCode: failed > 0 ? 1 : 0,
   };
 }
+
+export type ServeAppResult = {
+  ok: boolean;
+  envId?: string;
+  port?: number;
+  pid?: number | null;
+  command?: string;
+  previewUrl?: string;
+  status?: string;
+  target?: ExecutionTarget;
+  reused?: boolean;
+  error?: string;
+  note?: string;
+};
+
+export async function serveSandboxApp(
+  envId: string,
+  target: ExecutionTarget,
+  opts: { command?: string; port?: number; action?: 'start' | 'stop' | 'status' } = {}
+): Promise<ServeAppResult> {
+  const res = await postSandbox(
+    '/api/sandbox/serve',
+    {
+      envId,
+      target,
+      command: opts.command,
+      port: opts.port,
+      action: opts.action || 'start',
+    },
+    target
+  );
+  if (!res) {
+    return {
+      ok: false,
+      error: 'Sandbox runner unreachable on :17330. Start it with: npm run sandbox',
+    };
+  }
+  return (await res.json()) as ServeAppResult;
+}
+
+export function sandboxPreviewAbsoluteUrl(previewPath: string | undefined | null): string | null {
+  if (!previewPath) return null;
+  if (/^https?:\/\//i.test(previewPath)) return previewPath;
+  return `http://127.0.0.1:${PRIMARY_SANDBOX_PORT}${previewPath.startsWith('/') ? '' : '/'}${previewPath}`;
+}
+
+export type BrowserTestResult = {
+  ok: boolean;
+  status?: number | null;
+  title?: string;
+  url?: string;
+  headed?: boolean;
+  display?: string | null;
+  artifacts?: {
+    dir?: string;
+    screenshot?: string;
+    video?: string | null;
+    trace?: string;
+  };
+  screenshotBase64?: string | null;
+  error?: string;
+  hint?: string;
+  artifactsDir?: string;
+};
+
+/** Headed browser test — uses a longer client timeout (3 min). */
+export async function runSandboxBrowserTest(
+  envId: string,
+  target: ExecutionTarget,
+  opts: { url?: string; headed?: boolean } = {}
+): Promise<BrowserTestResult> {
+  const baseUrl = getControllerBaseUrl(target);
+  try {
+    const res = await fetch(`${baseUrl}/api/sandbox/browser-test`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        envId,
+        target,
+        url: opts.url,
+        headed: opts.headed,
+      }),
+      signal: AbortSignal.timeout(180000),
+    });
+    return (await res.json()) as BrowserTestResult;
+  } catch (err: any) {
+    return {
+      ok: false,
+      error: err?.message || 'browser-test request failed (is :17330 up? Playwright installed?)',
+    };
+  }
+}

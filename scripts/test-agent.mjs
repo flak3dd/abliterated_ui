@@ -482,6 +482,132 @@ check(
   check('verify soft-requires build for ts+package.json', !soft.ok && /build/i.test(soft.nudge || ''));
 }
 
+// --- anti-fabrication / evidence harden ---
+{
+  const sys = String(loop.AGENT_SYSTEM_PROMPT || '');
+  check(
+    'SYSTEM has evidence harden rules',
+    /Never invent tool results/i.test(sys) &&
+      /Only claim exec\/test\/build outcomes/i.test(sys) &&
+      /example\.com/i.test(sys) &&
+      /do not fake green/i.test(sys) &&
+      /credential stuffing/i.test(sys)
+  );
+  check(
+    'looksLikeFabricatedExecSummary detects example.com',
+    context.looksLikeFabricatedExecSummary(
+      'Login succeeded at https://example.com/app — all good.'
+    )
+  );
+  check(
+    'looksLikeFabricatedExecSummary detects playwright theater',
+    context.looksLikeFabricatedExecSummary(
+      'Running 12 tests using 4 workers\n  12 passed (Playwright chromium)'
+    )
+  );
+  check(
+    'looksLikeFabricatedExecSummary clean summary ok',
+    !context.looksLikeFabricatedExecSummary(
+      'Wrote fib.py and asked the user to run tests next.'
+    )
+  );
+  check(
+    'summaryClaimsSandboxRun detects all tests pass',
+    context.summaryClaimsSandboxRun('All tests passed. Ready to ship.')
+  );
+  check(
+    'goalImpliesSandboxRun detects pytest goal',
+    context.goalImpliesSandboxRun('implement fib and run pytest') &&
+      !context.goalImpliesSandboxRun('add a README section about architecture')
+  );
+
+  const noSteps = {
+    id: 'r',
+    sessionId: 's',
+    envId: 'e',
+    goal: 'implement hello',
+    status: 'running',
+    steps: [],
+    stepCount: 0,
+    execCount: 0,
+    createdAt: 1,
+    updatedAt: 1,
+  };
+  check(
+    'hasSandboxExecEvidence false without steps',
+    context.hasSandboxExecEvidence(noSteps) === false
+  );
+  check(
+    'hasSandboxExecEvidence true with test step',
+    context.hasSandboxExecEvidence({
+      ...noSteps,
+      steps: [
+        {
+          id: 's1',
+          index: 0,
+          tool: 'test',
+          status: 'ok',
+          startedAt: 1,
+          finishedAt: 2,
+        },
+      ],
+    }) === true
+  );
+
+  const fake = context.evaluateVerifyPolicy(
+    noSteps,
+    false,
+    'All tests passed. Playwright: 8 passed on https://example.com'
+  );
+  check(
+    'verify blocks fabricated summary without tools',
+    !fake.ok && /invent|tool evidence|example\.com/i.test((fake.nudge || '') + fake.notes.join(' '))
+  );
+
+  const claimOnly = context.evaluateVerifyPolicy(
+    noSteps,
+    false,
+    'Ran the tests — all tests pass, suite is green.'
+  );
+  check(
+    'verify blocks claim-without-evidence',
+    !claimOnly.ok && /VERIFY GATE/i.test(claimOnly.nudge || '')
+  );
+
+  const goalNeeds = context.evaluateVerifyPolicy(
+    { ...noSteps, goal: 'add unit tests and run pytest' },
+    false,
+    'Implemented the module; stopping here.'
+  );
+  check(
+    'verify blocks goal-implies-run without tools',
+    !goalNeeds.ok && /implies running or testing/i.test(goalNeeds.nudge || '')
+  );
+
+  const withEvidence = context.evaluateVerifyPolicy(
+    {
+      ...noSteps,
+      goal: 'add unit tests and run pytest',
+      steps: [
+        {
+          id: 's1',
+          index: 0,
+          tool: 'test',
+          status: 'ok',
+          startedAt: 1,
+          finishedAt: 2,
+          excerpt: '3 passed',
+        },
+      ],
+      lastTestPassed: true,
+      wroteSinceTest: false,
+    },
+    false,
+    'Tests passed via the test tool (3 passed).'
+  );
+  check('verify ok with real test evidence', withEvidence.ok);
+}
+
 // --- checkpoint / resume blob ---
 {
   const run = {

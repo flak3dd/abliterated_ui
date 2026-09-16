@@ -248,13 +248,116 @@ export function resumeContextBlob(run: AgentRun): string {
   ].join('\n');
 }
 
+/** True if this run recorded a real test/exec/build tool step (any terminal status). */
+export function hasSandboxExecEvidence(run: AgentRun): boolean {
+  return (run.steps || []).some(
+    (s) =>
+      (s.tool === 'test' || s.tool === 'exec' || s.tool === 'build' || s.tool === 'github' || s.tool === 'serve_app' || s.tool === 'browser_test' || s.tool === 'vision_heal' || s.tool === 'pty_session') &&
+      (s.status === 'ok' || s.status === 'error')
+  );
+}
+
+/** Goal text that implies the agent should actually run/tests via tools. */
+export function goalImpliesSandboxRun(goal: string): boolean {
+  const g = String(goal || '');
+  return /\b(test|tests|pytest|jest|vitest|playwright|cypress|e2e|unit\s*tests?|integration\s*tests?|run\s+tests?|build\s+and\s+test|ci\b|verify\s+with\s+tests?)\b/i.test(
+    g
+  );
+}
+
+/**
+ * Summary claims that sandbox exec/test/build happened or passed.
+ * Used with hasSandboxExecEvidence to catch invented green reports.
+ */
+export function summaryClaimsSandboxRun(text: string): boolean {
+  const t = String(text || '');
+  if (!t.trim()) return false;
+  return (
+    /\b(all\s+)?tests?\s+(pass(ed)?|fail(ed)?|succeed(ed)?|green|ok)\b/i.test(t) ||
+    /\b(ran|running|executed|re-?ran)\s+(the\s+)?(tests?|test\s+suite|build|playwright|pytest|jest|vitest)\b/i.test(
+      t
+    ) ||
+    /\b(build|npm\s+test|pytest|playwright|jest|vitest)\s+(pass(ed)?|ok|succeed(ed)?|green|failed)\b/i.test(
+      t
+    ) ||
+    /\b\d+\s+(passed|failed|tests?\s+passed)\b/i.test(t) ||
+    /\b(test|build)\s+(suite\s+)?(is\s+)?green\b/i.test(t)
+  );
+}
+
+/**
+ * Heuristic for fabricated sandbox theater: placeholder hosts, fake Playwright
+ * tables, invented terminal banners — without requiring a full LLM judge.
+ */
+export function looksLikeFabricatedExecSummary(text: string): boolean {
+  const t = String(text || '');
+  if (!t.trim()) return false;
+  // Placeholder hosts presented as real run targets
+  if (/\bhttps?:\/\/(www\.)?example\.com\b/i.test(t)) return true;
+  if (
+    /\blocalhost(?::\d+)?\b/i.test(t) &&
+    /\b(pass(ed)?|success|successful|verified|green|ok)\b/i.test(t) &&
+    /\b(test|login|e2e|playwright|browser|http\s*request)\b/i.test(t)
+  ) {
+    return true;
+  }
+  // Classic invented Playwright / runner theater
+  if (/Running \d+ tests? using \d+ workers?/i.test(t)) return true;
+  if (/\b(playwright|chromium|webkit|firefox)\b/i.test(t) && /\b\d+\s+passed\b/i.test(t)) {
+    return true;
+  }
+  if (/[✔✓]\s*\d+\s+passed/i.test(t) && /\b(test|spec|playwright|jest)\b/i.test(t)) {
+    return true;
+  }
+  return false;
+}
+
 /** Verify gates before allowing clean `completed`. */
-export function evaluateVerifyPolicy(run: AgentRun, envHasPackageJson: boolean): {
+export function evaluateVerifyPolicy(
+  run: AgentRun,
+  envHasPackageJson: boolean,
+  summaryText?: string
+): {
   ok: boolean;
   notes: string[];
   nudge?: string;
 } {
   const notes: string[] = [];
+  const summary = summaryText ?? run.summary ?? '';
+  const hasEvidence = hasSandboxExecEvidence(run);
+
+  // Anti-fabrication: never complete on invented exec/test theater
+  if (/\bhttps?:\/\/(www\.)?example\.com\b/i.test(summary)) {
+    notes.push('Summary uses example.com placeholder as if a real run target.');
+    return {
+      ok: false,
+      notes,
+      nudge:
+        'VERIFY GATE: Do not cite example.com (or invented URLs) as real sandbox results. Quote only tool output from this run, or state that tests were not run.',
+    };
+  }
+
+  if (!hasEvidence) {
+    if (looksLikeFabricatedExecSummary(summary) || summaryClaimsSandboxRun(summary)) {
+      notes.push('Summary claims exec/test/build outcomes without tool evidence this run.');
+      return {
+        ok: false,
+        notes,
+        nudge:
+          'VERIFY GATE: You claimed test/exec/build/browser results without calling those tools this run. Do not invent logs, test tables, screenshots, or URLs. Call `test`/`exec`/`build`/`serve_app`/`browser_test` for real evidence, or clearly state that tests were not run.',
+      };
+    }
+    if (goalImpliesSandboxRun(run.goal || '')) {
+      notes.push('Goal implies running/tests but no test/exec/build tool was used.');
+      return {
+        ok: false,
+        notes,
+        nudge:
+          'VERIFY GATE: The goal implies running or testing. Call `test` (or `exec`/`build`) and only then report outcomes from real tool results — never invent green results.',
+      };
+    }
+  }
+
   const wroteCode = (run.fileManifest || []).some(
     (m) =>
       (m.op === 'write' || m.op === 'edit') &&
@@ -306,4 +409,4 @@ export function systemMessagesArePrefixOnly(messages: { role: string }[]): boole
 
 export const READONLY_TOOLS = new Set(['list_files', 'read_file', 'grep']);
 export const WRITE_TOOLS = new Set(['write_file', 'edit_file', 'set_plan', 'update_task']);
-export const EXEC_TOOLS = new Set(['exec', 'test', 'build', 'github']);
+export const EXEC_TOOLS = new Set(['exec', 'test', 'build', 'github', 'serve_app', 'browser_test', 'vision_heal', 'pty_session']);

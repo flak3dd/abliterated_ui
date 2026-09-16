@@ -107,6 +107,7 @@ export const SwarmInspectorCard: React.FC<SwarmInspectorCardProps> = ({ swarm })
       {/* Interactive Subtask Worker Pipeline Cards */}
       <View style={styles.pipelineSection}>
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.pipelineRow}>
+          <View style={styles.matrixGrid}>
           {swarm.tasks.map((task, idx) => {
             const isSelected = activeTask?.id === task.id;
             const taskStream = workerOutputs[task.id];
@@ -167,6 +168,7 @@ export const SwarmInspectorCard: React.FC<SwarmInspectorCardProps> = ({ swarm })
               </TouchableOpacity>
             );
           })}
+          </View>
         </ScrollView>
       </View>
 
@@ -539,4 +541,16 @@ const styles = StyleSheet.create({
     color: '#E4E4E7',
     fontWeight: '600',
   },
+
+  matrixGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 8 },
+  matrixCell: {
+    width: '47%',
+    minWidth: 140,
+    padding: 8,
+    borderRadius: 8,
+    backgroundColor: 'rgba(255,255,255,0.04)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.08)',
+  },
+  matrixTok: { fontSize: 10, fontFamily: 'Menlo', color: Colors.brand.sky, marginTop: 4 },
 });

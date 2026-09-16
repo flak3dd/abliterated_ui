@@ -484,6 +484,46 @@ export const ChatBubbleBase: React.FC<ChatBubbleProps> = ({
           </View>
         )}
 
+        {!!message.attachments?.length && (
+          <View style={styles.attachRow}>
+            {message.attachments.map((a) =>
+              /^image\//i.test(a.mime) ? (
+                <RNImage key={a.id} source={{ uri: a.uri }} style={styles.attachImage} />
+              ) : (
+                <Text key={a.id} style={styles.attachChip}>
+                  {a.name}
+                </Text>
+              )
+            )}
+          </View>
+        )}
+        {!!message.previewUrl && (
+          <TouchableOpacity
+            onPress={() => {
+              const s = useSandboxStore.getState();
+              s.setDrawerTab('preview');
+              s.setDrawerOpen(true);
+            }}
+          >
+            <Text style={styles.previewLink}>Open live preview</Text>
+          </TouchableOpacity>
+        )}
+        {message.role === 'user' && !isStreaming && (
+          <TouchableOpacity
+            onPress={() => {
+              const next =
+                typeof window !== 'undefined'
+                  ? window.prompt('Edit message', message.content)
+                  : null;
+              if (next != null && next.trim()) {
+                useChatStore.getState().editAndResend(message.id, next.trim());
+              }
+            }}
+          >
+            <Text style={styles.editLink}>Edit & resend</Text>
+          </TouchableOpacity>
+        )}
+
         {/* Reasoning Trace Disclosure */}
         {Boolean(message.reasoning) && (
           <ReasoningAccordion
@@ -494,7 +534,15 @@ export const ChatBubbleBase: React.FC<ChatBubbleProps> = ({
 
         {/* Multi-Agent Swarm Inspector Card */}
         {message.swarmSession && (
-          <SwarmInspectorCard swarm={message.swarmSession} />
+          <View>
+            <SwarmInspectorCard swarm={message.swarmSession} />
+            <TouchableOpacity
+              style={styles.handoffBtn}
+              onPress={() => useChatStore.getState().continueBuildFromSwarm(message.id)}
+            >
+              <Text style={styles.handoffBtnText}>Continue in BUILD agent</Text>
+            </TouchableOpacity>
+          </View>
         )}
         {message.buildPlanPrompt && (
           <BuildPlanPromptCard
@@ -622,6 +670,7 @@ export const ChatBubbleBase: React.FC<ChatBubbleProps> = ({
   );
 };
 
+// enhancement styles injected below StyleSheet in file — see handoffBtn
 export const ChatBubble = React.memo(ChatBubbleBase, (prevProps, nextProps) => {
   return (
     prevProps.message.content === nextProps.message.content &&
@@ -937,4 +986,34 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: Colors.text.secondary,
   },
+
+  handoffBtn: {
+    marginTop: 8,
+    alignSelf: 'flex-start',
+    backgroundColor: 'rgba(16,185,129,0.15)',
+    borderRadius: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderWidth: 1,
+    borderColor: 'rgba(16,185,129,0.35)',
+  },
+  handoffBtnText: {
+    color: Colors.brand.emerald,
+    fontSize: 11,
+    fontWeight: '700',
+    fontFamily: 'Menlo',
+  },
+  attachRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginBottom: 8 },
+  attachImage: { width: 96, height: 96, borderRadius: 8 },
+  attachChip: {
+    fontSize: 10,
+    fontFamily: 'Menlo',
+    color: Colors.brand.sky,
+    backgroundColor: 'rgba(56,189,248,0.12)',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 6,
+  },
+  previewLink: { color: Colors.brand.sky, fontSize: 11, fontFamily: 'Menlo', marginBottom: 6 },
+  editLink: { color: Colors.text.tertiary, fontSize: 10, fontFamily: 'Menlo', marginBottom: 6 },
 });

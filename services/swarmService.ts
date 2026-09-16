@@ -265,10 +265,19 @@ function createFallbackDecomposition(
     {
       id: 'task_qa',
       role: 'tester',
-      title: 'Automated Test Matrix',
-      description: 'Write comprehensive test suite covering happy paths, edge cases, and validation.',
+      title: 'Automated Test Matrix / Playwright',
+      description: 'Write and outline Playwright or unit tests covering happy paths and edge cases.',
       targetFiles: [isPython ? `test_${slug}.py` : 'src/engine.test.ts'],
       dependencies: ['task_arch', 'task_core'],
+      status: 'queued',
+    },
+    {
+      id: 'task_critic',
+      role: 'critic',
+      title: 'Security & Anti-Hallucination Audit',
+      description: 'Audit for secrets, unsafe defaults, invented APIs, and verify claims against sandbox files.',
+      targetFiles: [isPython ? `${slug}_AUDIT.md` : 'AUDIT.md'],
+      dependencies: ['task_core', 'task_qa'],
       status: 'queued',
     },
   ];

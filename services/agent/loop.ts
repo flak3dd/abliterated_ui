@@ -20,7 +20,8 @@ import {
   upsertManifest,
 } from './context';
 
-const SYSTEM = `You are the Spark BUILD agent on NVIDIA GB10 (unified LPDDR5x, vLLM :8000, sandbox runner).
+/** Exported for unit tests — keep in sync with runtime SYSTEM. */
+export const AGENT_SYSTEM_PROMPT = `You are the Spark BUILD agent on NVIDIA GB10 (unified LPDDR5x, vLLM :8000, sandbox runner).
 Complete the user's software task by calling tools.
 
 Workflow:
@@ -31,6 +32,16 @@ Workflow:
 - After writes: call test (optional paths[] for focused runs). For Node/TypeScript also build when package.json exists.
 - Do not stop on the first green if the goal lists more deliverables — finish remaining checklist items, then summarize.
 
+Evidence rules (mandatory — no fake sandbox execution):
+- Never invent tool results, terminal output, test tables, Playwright logs, or URLs.
+- Only claim exec/test/build outcomes that appear in prior tool messages this run.
+- Never substitute example.com / localhost placeholders as if they were real run targets when summarizing.
+- If tests were not run via tools, say so explicitly — do not fake green or "all tests pass".
+- Prefer quoting/capping real tool excerpts over narrative theater.
+
+Safety (product):
+- Do not build automated credential stuffing / unauthorized login bots against third-party sites or leaked credential dumps; refuse that class of goal in-plan and stop.
+
 GitHub / git (sandbox):
 - Prefer the github tool for auth_status, pr_list, pr_view, pr_create, repo_view, issue_list.
 - Or exec with allowlisted git/gh (status, diff, add, commit, push, clone, pr create/view).
@@ -38,6 +49,8 @@ GitHub / git (sandbox):
 - Never force-push to main/master; never read .env or scrape secrets from logs; never invent tokens.
 - If gh is not logged in, tell the user to run: gh auth login
 - No deploy or image generation via this agent.`;
+
+const SYSTEM = AGENT_SYSTEM_PROMPT;
 
 type ChatMsg = {
   role: string;
@@ -252,7 +265,7 @@ export async function runBuildAgent(hooks: AgentLoopHooks): Promise<AgentRun> {
 
       if (!calls.length) {
         const text = String(msg.content || '').trim() || 'Agent finished.';
-        const verify = evaluateVerifyPolicy(run, envHasPackageJson(ctx));
+        const verify = evaluateVerifyPolicy(run, envHasPackageJson(ctx), text);
         if (!verify.ok && !verifyNudgeUsed && verify.nudge) {
           verifyNudgeUsed = true;
           messages.push({ role: 'assistant', content: text });
@@ -368,7 +381,7 @@ export async function runBuildAgent(hooks: AgentLoopHooks): Promise<AgentRun> {
           ...run,
           steps: run.steps.map((s) => (s.id === step.id ? done : s)),
           execCount: isExec ? run.execCount + 1 : run.execCount,
-          lastTestPassed: result.testPassed ?? run.lastTestPassed,
+          lastTestPassed: result.testPassed ?? result.browserTestOk ?? run.lastTestPassed,
           lastBuildOk: result.buildOk ?? run.lastBuildOk,
           fileManifest,
           phase: advancePhase(run, call.name),

@@ -19,6 +19,12 @@ import {
 } from '../services/zipService';
 import { telemetryBridge } from '../services/matrix/TelemetryStreamBridge';
 import { evaluateFactualGrounding } from '../services/hallucinationDetector';
+import {
+  buildSessionExportMarkdown,
+  downloadTextFile,
+  buildVisionUserContent,
+} from '../services/chatEnhancements';
+import type { MessageAttachment } from '../types';
 import { useModelSession } from './useModelSession';
 import { useRagStore } from './useRagStore';
 import {
@@ -39,13 +45,19 @@ interface ChatState {
   streamingSessionId: string | null;
   activeAbortController: AbortController | null;
   antiHallucination: boolean;
+  lastFailedUserText: string | null;
 
   // Actions
   createNewSession: (initialTitle?: string) => string;
   selectSession: (id: string) => void;
   deleteSession: (id: string) => void;
   clearCurrentSession: () => void;
-  sendMessage: (text: string) => Promise<void>;
+  sendMessage: (text: string, attachments?: MessageAttachment[]) => Promise<void>;
+  retryLastTurn: () => Promise<void>;
+  editAndResend: (messageId: string, newText: string) => Promise<void>;
+  branchSessionFromHere: () => string | null;
+  exportSessionMarkdown: () => string | null;
+  continueBuildFromSwarm: (assistantMsgId: string) => Promise<void>;
   continueAgentRun: (prior: import('../types/agent').AgentRun) => Promise<void>;
   draftBuildPlan: (promptMsgId?: string) => Promise<void>;
   approveBuildPlanAndStart: (promptMsgId?: string) => Promise<void>;
@@ -159,6 +171,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   streamingSessionId: null,
   activeAbortController: null,
   antiHallucination: true,
+  lastFailedUserText: null,
 
   toggleAntiHallucination: () => {
     set((state) => ({ antiHallucination: !state.antiHallucination }));
@@ -372,8 +385,41 @@ export const useChatStore = create<ChatState>((set, get) => ({
     }
   },
 
-  sendMessage: async (text: string) => {
+  sendMessage: async (text: string, attachments?: MessageAttachment[]) => {
     if (!text.trim()) return;
+
+    // /schedule and /watch slash commands → sandbox jobs daemon
+    const trimmedSlash = text.trim();
+    if (/^\/(schedule|watch)\b/i.test(trimmedSlash)) {
+      try {
+        const res = await fetch('http://127.0.0.1:17330/api/sandbox/jobs', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ slash: trimmedSlash }),
+          signal: AbortSignal.timeout(8000),
+        });
+        const data = await res.json();
+        let currentSessionId = get().activeSessionId;
+        if (!currentSessionId) currentSessionId = get().createNewSession('Jobs');
+        const msgId = 'msg_job_' + Date.now();
+        const content = data.ok
+          ? `Scheduled background job \`${data.id}\` (${data.kind || 'job'}). I will post a notice when it needs attention.`
+          : `Could not schedule job: ${data.error || res.status}`;
+        set((state) => ({
+          messages: {
+            ...state.messages,
+            [currentSessionId!]: [
+              ...(state.messages[currentSessionId!] || []),
+              { id: 'msg_u_' + Date.now(), role: 'user', content: trimmedSlash, timestamp: Date.now() },
+              { id: msgId, role: 'assistant', content, timestamp: Date.now() },
+            ],
+          },
+        }));
+        return;
+      } catch (e: any) {
+        console.warn('[schedule]', e?.message);
+      }
+    }
     if (get().isStreaming) {
       if (get().streamingSessionId === get().activeSessionId) return;
       get().stopStreaming();
@@ -414,7 +460,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
       role: 'user',
       content: text.trim(),
       timestamp: Date.now(),
+      attachments: attachments?.length ? attachments : undefined,
     };
+    set({ lastFailedUserText: text.trim() });
 
     const assistantMsgId = 'msg_' + (Date.now() + 1);
     const assistantMsg: Message = {
@@ -899,14 +947,36 @@ export const useChatStore = create<ChatState>((set, get) => ({
       const MAX_TURN_CHARS = 1800;
       const messageHistory = (get().messages[currentSessionId!] || [])
         .filter((m) => m.id !== assistantMsgId && (m.role === 'user' || m.role === 'assistant'))
-        .map((m) => ({
-          role: m.role,
-          content:
+        .map((m) => {
+          let content: any =
             m.content.length > MAX_TURN_CHARS
               ? m.content.slice(0, MAX_TURN_CHARS) + '\n... [truncated]'
-              : m.content,
-        }))
+              : m.content;
+          if (m.role === 'user' && m.attachments?.length) {
+            content = buildVisionUserContent(content, m.attachments);
+          }
+          return { role: m.role, content };
+        })
         .slice(-CONTEXT_TURNS);
+
+      // Pinned sandbox files into system context
+      let pinnedSection = '';
+      try {
+        const { useChatExtrasStore } = require('./useChatExtrasStore');
+        const pins = useChatExtrasStore.getState().getPins(currentSessionId!) || [];
+        if (pins.length && activeEnv) {
+          const chunks = pins
+            .map((p: string) => {
+              const f = activeEnv.files[p];
+              if (!f) return null;
+              return `### ${p}\n${(f.content || '').slice(0, 1200)}`;
+            })
+            .filter(Boolean);
+          if (chunks.length) {
+            pinnedSection = `\nPINNED SANDBOX FILES (user-selected):\n${chunks.join('\n\n')}\n`;
+          }
+        }
+      } catch {}
 
       let accumulatedContent = '';
       let accumulatedReasoning = isSwarmMode && swarmDecisionReason
@@ -952,7 +1022,7 @@ LOCAL RAG is enabled but retrieved no passages for this query. Do not invent clu
         : '';
 
       const systemPrompt = `You are Spark, an expert software engineer. Be truthful. If you lack a fact, say so.
-${antiHallucinationSection}${ragSection}
+${antiHallucinationSection}${ragSection}${pinnedSection}
 CODE RULES: put the exact relative path in every fence (\`\`\`python app.py). Ship complete files plus tests. No TODOs or stubs. Prefer stdlib.`;
 
       const meshState = useMeshStore.getState();
@@ -1564,6 +1634,94 @@ CODE RULES: put the exact relative path in every fence (\`\`\`python app.py). Sh
       });
     }
     void get().flushSave();
+  },
+
+
+  retryLastTurn: async () => {
+    const text = get().lastFailedUserText;
+    if (!text) return;
+    await get().sendMessage(text);
+  },
+
+  editAndResend: async (messageId: string, newText: string) => {
+    const sessionId = get().activeSessionId;
+    if (!sessionId || !newText.trim()) return;
+    const msgs = get().messages[sessionId] || [];
+    const idx = msgs.findIndex((m) => m.id === messageId && m.role === 'user');
+    if (idx === -1) return;
+    // Truncate thread after the edited message, then resend
+    const kept = msgs.slice(0, idx);
+    set((state) => ({
+      messages: { ...state.messages, [sessionId]: kept },
+    }));
+    await get().sendMessage(newText.trim(), msgs[idx].attachments);
+  },
+
+  branchSessionFromHere: () => {
+    const sessionId = get().activeSessionId;
+    if (!sessionId) return null;
+    const prior = get().sessions.find((s) => s.id === sessionId);
+    const msgs = get().messages[sessionId] || [];
+    const env = get().getActiveEnvironment();
+    const newId = get().createNewSession((prior?.title || 'Chat') + ' (branch)');
+    const newSession = get().sessions.find((s) => s.id === newId);
+    if (!newSession) return null;
+    // mark parent + copy messages/env files
+    set((state) => {
+      const environments = { ...state.environments };
+      const newEnvId = state.sessions.find((s) => s.id === newId)?.envId;
+      if (newEnvId && env) {
+        environments[newEnvId] = {
+          ...environments[newEnvId],
+          files: { ...env.files },
+          updatedAt: Date.now(),
+        };
+      }
+      return {
+        sessions: state.sessions.map((s) =>
+          s.id === newId ? { ...s, parentSessionId: sessionId, title: (prior?.title || 'Chat') + ' (branch)' } : s
+        ),
+        messages: {
+          ...state.messages,
+          [newId]: msgs.map((m) => ({ ...m, id: m.id + '_br_' + Date.now().toString(36).slice(-4) })),
+        },
+        environments,
+      };
+    });
+    return newId;
+  },
+
+  exportSessionMarkdown: () => {
+    const sessionId = get().activeSessionId;
+    if (!sessionId) return null;
+    const session = get().sessions.find((s) => s.id === sessionId);
+    if (!session) return null;
+    const md = buildSessionExportMarkdown({
+      session,
+      messages: get().messages[sessionId] || [],
+      env: get().getActiveEnvironment(),
+    });
+    downloadTextFile(`${session.title.replace(/[^\w\-]+/g, '_').slice(0, 40) || 'chat'}.md`, md);
+    return md;
+  },
+
+  continueBuildFromSwarm: async (assistantMsgId: string) => {
+    const sessionId = get().activeSessionId;
+    if (!sessionId) return;
+    const msgs = get().messages[sessionId] || [];
+    const m = msgs.find((x) => x.id === assistantMsgId);
+    const goal =
+      'Continue from the multi-agent swarm result: review sandbox files, harden tests, and finish any remaining BUILD work. ' +
+      (m?.content || '').slice(0, 500);
+    try {
+      const { useAgentStore } = await import('./useAgentStore');
+      const { useSwarmStore } = await import('./useSwarmStore');
+      useSwarmStore.getState().setSwarmMode(false);
+      useAgentStore.getState().setAgentMode(true);
+    } catch {
+      /* */
+    }
+    await get().sendMessage(goal);
   },
 
   stopStreaming: () => {

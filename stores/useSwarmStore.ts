@@ -58,7 +58,7 @@ export const useSwarmStore = create<SwarmState>((set, get) => ({
   activeSwarm: null,
   selectedTaskId: null,
   workerOutputs: {},
-  concurrencyLimit: 2,
+  concurrencyLimit: 4,
 
   toggleSwarmMode: () => {
     set((state) => ({ isSwarmMode: !state.isSwarmMode }));

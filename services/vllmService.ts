@@ -12,16 +12,23 @@ export const SPARK_MAX_CONTEXT = 16384;
 export const SPARK_TARGET_OUTPUT = 8192;
 export const SPARK_MIN_OUTPUT = 768;
 
-export function estimateTokens(text: string): number {
+export function estimateTokens(text: string | Array<{ type?: string; text?: string }> | any): number {
   if (!text) return 1;
+  if (typeof text !== 'string') {
+    try {
+      return Math.max(1, Math.ceil(JSON.stringify(text).length / 3.4));
+    } catch {
+      return 64;
+    }
+  }
   return Math.max(1, Math.ceil(text.length / 3.4));
 }
 
 export function fitMessagesToContext(
-  messages: Array<{ role: string; content: string }>,
+  messages: Array<{ role: string; content: any }>,
   ctx = SPARK_MAX_CONTEXT,
   targetOut = SPARK_TARGET_OUTPUT
-): { messages: Array<{ role: string; content: string }>; max_tokens: number } {
+): { messages: Array<{ role: string; content: any }>; max_tokens: number } {
   const overhead = 96;
   const system = messages.filter((m) => m.role === 'system').map((m) => ({ ...m, content: m.content || '' }));
   let rest = messages.filter((m) => m.role !== 'system').map((m) => ({ ...m, content: m.content || '' }));
@@ -37,7 +44,7 @@ export function fitMessagesToContext(
   if (remaining() < SPARK_MIN_OUTPUT && system[0]) {
     const others = rest.reduce((sum, m) => sum + estimateTokens(m.content) + 6, 0) + overhead;
     const sysBudgetChars = Math.max(400, Math.floor((ctx - SPARK_MIN_OUTPUT - others) * 3.4));
-    if (system[0].content.length > sysBudgetChars) {
+    if (typeof system[0].content === 'string' && system[0].content.length > sysBudgetChars) {
       system[0].content = system[0].content.slice(0, sysBudgetChars) + '\n... [system truncated for context]';
     }
   }
@@ -62,7 +69,7 @@ export async function streamChatCompletion({
   port?: number;
   model?: string;
   apiKey?: string;
-  messages: Array<{ role: string; content: string }>;
+  messages: Array<{ role: string; content: any }>;
   callbacks: StreamCallbacks;
   abortSignal?: AbortSignal;
   temperature?: number;

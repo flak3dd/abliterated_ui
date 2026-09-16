@@ -12,6 +12,10 @@ import {
   buildSandbox,
   executeSandboxCommand,
   detectRuntimeAndFramework,
+  serveSandboxApp,
+  runSandboxBrowserTest,
+  sandboxPreviewAbsoluteUrl,
+  type BrowserTestResult,
 } from '../services/sandboxService';
 
 interface SandboxState {
@@ -25,9 +29,12 @@ interface SandboxState {
   autoTestOnResponse: boolean;
   webPreviewUrl: string | null;
   runningCodeBlockIndex: number | null;
+  drawerTab: 'terminal' | 'preview' | 'browser';
+  lastBrowserTest: BrowserTestResult | null;
 
   // Actions
   setDrawerOpen: (open: boolean) => void;
+  setDrawerTab: (tab: 'terminal' | 'preview' | 'browser') => void;
   setTarget: (target: ExecutionTarget) => void;
   setAutoTestOnResponse: (val: boolean) => void;
   appendLog: (line: string) => void;
@@ -37,6 +44,8 @@ interface SandboxState {
   runCodeBlock: (filename?: string, code?: string, index?: number) => Promise<void>;
   buildActiveEnv: () => Promise<BuildReport | null>;
   runCommandInSandbox: (cmd: string) => Promise<void>;
+  serveActiveApp: (command?: string) => Promise<string | null>;
+  runBrowserTestForEnv: (url?: string) => Promise<BrowserTestResult | null>;
   autoFixWithSpark: (errorMessage: string) => void;
 }
 
@@ -55,8 +64,11 @@ export const useSandboxStore = create<SandboxState>((set, get) => ({
   autoTestOnResponse: false,
   webPreviewUrl: null,
   runningCodeBlockIndex: null,
+  drawerTab: 'terminal',
+  lastBrowserTest: null,
 
   setDrawerOpen: (open: boolean) => set({ isDrawerOpen: open }),
+  setDrawerTab: (tab) => set({ drawerTab: tab }),
   setTarget: (target: ExecutionTarget) => set({ target }),
   setAutoTestOnResponse: (val: boolean) => set({ autoTestOnResponse: val }),
 
@@ -224,6 +236,63 @@ export const useSandboxStore = create<SandboxState>((set, get) => ({
     } catch (err: any) {
       get().appendLog(`[Error] ${err.message}`);
       set({ status: 'failed' });
+    }
+  },
+
+  serveActiveApp: async (command?: string) => {
+    const activeEnv = useChatStore.getState().getActiveEnvironment();
+    if (!activeEnv) return null;
+    set({ status: 'running', isDrawerOpen: true, drawerTab: 'preview' });
+    get().appendLog(`\n[Serve] Starting persistent app for ${activeEnv.id}...`);
+    try {
+      await get().materializeActiveEnv();
+      const result = await serveSandboxApp(activeEnv.id, get().target, { command, action: 'start' });
+      if (!result.ok) {
+        get().appendLog(`[Serve Error] ${result.error || 'failed'}`);
+        set({ status: 'failed' });
+        return null;
+      }
+      const abs = sandboxPreviewAbsoluteUrl(result.previewUrl);
+      get().appendLog(`[Serve] ${result.reused ? 'Reused' : 'Started'} :${result.port} pid=${result.pid}`);
+      get().appendLog(`[Serve] Preview ${abs}`);
+      set({ status: 'success', webPreviewUrl: abs });
+      return abs;
+    } catch (err: any) {
+      get().appendLog(`[Serve Error] ${err.message}`);
+      set({ status: 'failed' });
+      return null;
+    }
+  },
+
+  runBrowserTestForEnv: async (url?: string) => {
+    const activeEnv = useChatStore.getState().getActiveEnvironment();
+    if (!activeEnv) return null;
+    set({ status: 'testing', isDrawerOpen: true, drawerTab: 'browser' });
+    get().appendLog(`\n[BrowserTest] Headed Playwright against ${url || 'live preview'}...`);
+    try {
+      await get().materializeActiveEnv();
+      const preview = get().webPreviewUrl;
+      if (!preview && !url) {
+        await get().serveActiveApp();
+      }
+      const result = await runSandboxBrowserTest(activeEnv.id, get().target, {
+        url: url || get().webPreviewUrl || undefined,
+        headed: true,
+      });
+      if (result.ok) {
+        get().appendLog(`[BrowserTest] OK title=${result.title} status=${result.status}`);
+        get().appendLog(`[BrowserTest] screenshot=${result.artifacts?.screenshot || 'n/a'}`);
+        set({ status: 'success', lastBrowserTest: result });
+      } else {
+        get().appendLog(`[BrowserTest Error] ${result.error}`);
+        if (result.hint) get().appendLog(`[BrowserTest Hint] ${result.hint}`);
+        set({ status: 'failed', lastBrowserTest: result });
+      }
+      return result;
+    } catch (err: any) {
+      get().appendLog(`[BrowserTest Error] ${err.message}`);
+      set({ status: 'failed' });
+      return null;
     }
   },
 

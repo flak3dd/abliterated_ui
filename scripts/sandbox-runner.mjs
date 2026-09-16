@@ -15,6 +15,27 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { exec, execFile } from 'node:child_process';
 import { promisify } from 'node:util';
+import {
+  liveServers,
+  startLiveServer,
+  stopLiveServer,
+  proxyToLiveServer,
+  runBrowserTest,
+} from './sandbox-live.mjs';
+import {
+  broadcastSandboxEvent,
+  subscribeSse,
+  recentEvents,
+} from './sandbox-events.mjs';
+import { attachPtyServer, ptyAvailable, listPtySessions } from './sandbox-pty.mjs';
+import {
+  listJobs,
+  createCronJob,
+  createWatchJob,
+  stopJob,
+  parseScheduleSlash,
+  parseWatchSlash,
+} from './sandbox-jobs.mjs';
 
 const execP = promisify(exec);
 const execFileP = promisify(execFile);
@@ -41,6 +62,8 @@ const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..
 const IMAGE_DEBUG_LOG = path.join(REPO_ROOT, 'logs', 'image-gen-debug.jsonl');
 const imageDebugRing = [];
 const IMAGE_DEBUG_RING_MAX = 400;
+
+
 
 const C = {
   reset: '\x1b[0m',
@@ -152,7 +175,33 @@ const server = http.createServer(async (req, res) => {
         service: 'spark-sandbox-runner',
         port: PORT,
         uptime: process.uptime(),
+        features: ['serve', 'preview', 'browser-test', 'sse', 'pty', 'jobs'],
       });
+    }
+
+    // SSE live log stream
+    if (pathname === '/api/sandbox/events' && req.method === 'GET') {
+      res.writeHead(200, {
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache',
+        Connection: 'keep-alive',
+        'Access-Control-Allow-Origin': res._aco || '*',
+      });
+      res.write(`data: ${JSON.stringify({ type: 'hello', uptime: process.uptime(), recent: recentEvents(40) })}\n\n`);
+      const unsub = subscribeSse(res);
+      const keep = setInterval(() => {
+        try {
+          res.write(': ping\n\n');
+        } catch {
+          clearInterval(keep);
+          unsub();
+        }
+      }, 15000);
+      req.on('close', () => {
+        clearInterval(keep);
+        unsub();
+      });
+      return;
     }
 
     // 1. POST /api/sandbox/materialize
@@ -229,6 +278,12 @@ const server = http.createServer(async (req, res) => {
           await writeFile(absPath, fileData.content || '', 'utf8');
         });
 
+        broadcastSandboxEvent({
+          type: 'materialize',
+          envId,
+          target: 'local_mac',
+          filesCount: fileEntries.length,
+        });
         return sendJson(res, 200, {
           ok: true,
           envId,
@@ -436,16 +491,161 @@ const server = http.createServer(async (req, res) => {
       return sendJson(res, 200, { ok: true });
     }
 
-    // 5. DELETE /api/sandbox/:envId
+    // 5. POST /api/sandbox/serve — persistent dev server
+    if (pathname === '/api/sandbox/serve' && req.method === 'POST') {
+      const body = await parseJsonBody(req);
+      const envId = String(body.envId || '').replace(/[^a-zA-Z0-9_\-]/g, '_');
+      const target = body.target || 'local_mac';
+      const action = String(body.action || 'start').toLowerCase();
+      if (!envId) return sendJson(res, 400, { ok: false, error: 'envId is required' });
+
+      if (action === 'stop' || action === 'status') {
+        if (action === 'stop') {
+          const stopped = await stopLiveServer(envId);
+          return sendJson(res, 200, stopped);
+        }
+        const entry = liveServers.get(envId);
+        if (!entry) return sendJson(res, 200, { ok: true, status: 'stopped', envId });
+        return sendJson(res, 200, {
+          ok: true,
+          status: entry.child ? 'running' : 'stopped',
+          envId,
+          port: entry.port,
+          pid: entry.pid,
+          command: entry.command,
+          previewUrl: entry.previewPath,
+          target: entry.target,
+        });
+      }
+
+      const cwd =
+        target === 'dgx_spark'
+          ? `${SANDBOX_BASE_REMOTE}/${envId}`
+          : path.join(SANDBOX_BASE_LOCAL, envId);
+      if (target !== 'dgx_spark') {
+        await mkdir(cwd, { recursive: true });
+      }
+      const result = await startLiveServer({
+        envId,
+        cwd,
+        target,
+        command: body.command,
+        port: body.port ? Number(body.port) : undefined,
+        sshRemote,
+      });
+      return sendJson(res, result.ok ? 200 : 500, result);
+    }
+
+    // 6. GET /api/sandbox/preview/:envId/* — reverse proxy to live server
+    if (pathname.startsWith('/api/sandbox/preview/') && req.method === 'GET') {
+      const rest = pathname.slice('/api/sandbox/preview/'.length);
+      const slash = rest.indexOf('/');
+      const envIdRaw = slash === -1 ? rest : rest.slice(0, slash);
+      const envId = decodeURIComponent(envIdRaw).replace(/[^a-zA-Z0-9_\-]/g, '_');
+      const restPath = slash === -1 ? '' : rest.slice(slash + 1);
+      return proxyToLiveServer(req, res, envId, restPath);
+    }
+
+    // 7. POST /api/sandbox/browser-test — headed Playwright (Mac) / Xvfb (Linux/Spark)
+    if (pathname === '/api/sandbox/browser-test' && req.method === 'POST') {
+      const body = await parseJsonBody(req);
+      const envId = String(body.envId || '').replace(/[^a-zA-Z0-9_\-]/g, '_');
+      const target = body.target || 'local_mac';
+      if (!envId) return sendJson(res, 400, { ok: false, error: 'envId is required' });
+
+      let url = String(body.url || '').trim();
+      if (!url) {
+        const entry = liveServers.get(envId);
+        if (entry) {
+          url = `http://127.0.0.1:${entry.port}/`;
+        } else {
+          url = `http://127.0.0.1:${PORT}/api/sandbox/preview/${encodeURIComponent(envId)}/`;
+        }
+      } else if (url.startsWith('/')) {
+        url = `http://127.0.0.1:${PORT}${url}`;
+      }
+
+      // Spark: run browser on Mac against tunneled/local URL when possible
+      const result = await runBrowserTest({
+        envId,
+        url,
+        target,
+        headed: body.headed,
+        sandboxBase: SANDBOX_BASE_LOCAL,
+      });
+      return sendJson(res, result.ok ? 200 : 500, result);
+    }
+
+    // 8. DELETE /api/sandbox/:envId
+
     if (pathname.startsWith('/api/sandbox/') && req.method === 'DELETE') {
       const envId = pathname.replace('/api/sandbox/', '').replace(/[^a-zA-Z0-9_\-]/g, '_');
       if (envId) {
+        try {
+          await stopLiveServer(envId);
+        } catch {}
         const localDir = path.join(SANDBOX_BASE_LOCAL, envId);
         try {
           await rm(localDir, { recursive: true, force: true });
         } catch {}
       }
       return sendJson(res, 200, { ok: true, envId });
+    }
+
+    // PTY / jobs control plane
+    if (pathname === '/api/sandbox/pty/status' && req.method === 'GET') {
+      return sendJson(res, 200, {
+        ok: true,
+        available: ptyAvailable(),
+        sessions: listPtySessions(),
+        wsPath: '/api/sandbox/pty',
+      });
+    }
+
+    if (pathname === '/api/sandbox/jobs' && req.method === 'GET') {
+      return sendJson(res, 200, { ok: true, jobs: listJobs() });
+    }
+
+    if (pathname === '/api/sandbox/jobs' && req.method === 'POST') {
+      const body = await parseJsonBody(req);
+      try {
+        if (body.kind === 'cron' || body.expr) {
+          const id = createCronJob({
+            id: body.id,
+            expr: body.expr,
+            prompt: body.prompt || '',
+            cwd: body.cwd,
+          });
+          return sendJson(res, 200, { ok: true, id });
+        }
+        if (body.kind === 'watch' || body.path) {
+          const id = createWatchJob({
+            id: body.id,
+            watchPath: body.path,
+            prompt: body.prompt || '',
+          });
+          return sendJson(res, 200, { ok: true, id });
+        }
+        // slash parse helpers
+        const sched = parseScheduleSlash(body.slash || body.text || '');
+        if (sched) {
+          const id = createCronJob({ expr: sched.expr, prompt: sched.prompt, cwd: body.cwd });
+          return sendJson(res, 200, { ok: true, id, kind: 'cron' });
+        }
+        const watch = parseWatchSlash(body.slash || body.text || '');
+        if (watch) {
+          const id = createWatchJob({ watchPath: watch.path, prompt: watch.prompt });
+          return sendJson(res, 200, { ok: true, id, kind: 'watch' });
+        }
+        return sendJson(res, 400, { ok: false, error: 'Need kind=cron|watch or slash text' });
+      } catch (err) {
+        return sendJson(res, 500, { ok: false, error: err.message });
+      }
+    }
+
+    if (pathname.startsWith('/api/sandbox/jobs/') && req.method === 'DELETE') {
+      const id = pathname.split('/').pop();
+      return sendJson(res, 200, { ok: stopJob(id), id });
     }
 
     return sendJson(res, 404, { ok: false, error: 'Not Found' });
@@ -456,10 +656,16 @@ const server = http.createServer(async (req, res) => {
 });
 
 server.listen(PORT, HOST, () => {
+  try {
+    attachPtyServer(server);
+  } catch (err) {
+    console.warn('[pty] attach failed', err.message);
+  }
   console.log(`\n${C.bold}======================================================================${C.reset}`);
   console.log(`   ${C.green}⚡ SPARK EPHEMERAL SANDBOX RUNNER ONLINE ⚡${C.reset}`);
   console.log(`   Address: http://${HOST}:${PORT}`);
   console.log(`   Local Sandboxes:  ${SANDBOX_BASE_LOCAL}`);
   console.log(`   Remote Sandboxes: ${SANDBOX_BASE_REMOTE} (on DGX Spark)`);
+  console.log(`   PTY: ${ptyAvailable() ? 'ws /api/sandbox/pty' : 'unavailable (npm i node-pty)'}`);
   console.log(`${C.bold}======================================================================${C.reset}\n`);
 });

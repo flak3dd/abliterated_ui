@@ -9,6 +9,7 @@ import {
   Modal,
   SafeAreaView,
   Platform,
+  Image,
 } from 'react-native';
 import {
   X,
@@ -20,11 +21,22 @@ import {
   Cpu,
   Laptop,
   CornerDownLeft,
+  Globe,
+  Camera,
 } from 'lucide-react-native';
 import * as Haptics from 'expo-haptics';
 import Colors from '../../theme/colors';
+let WebView: any = null;
+try {
+  WebView = require('react-native-webview').WebView;
+} catch {
+  WebView = null;
+}
 import { useSandboxStore } from '../../stores/useSandboxStore';
 import { useChatStore } from '../../stores/useChatStore';
+import { PtyTerminalBubble } from './PtyTerminalBubble';
+
+type DrawerTab = 'terminal' | 'preview' | 'browser';
 
 export const SandboxTerminalDrawer: React.FC = () => {
   const {
@@ -39,21 +51,28 @@ export const SandboxTerminalDrawer: React.FC = () => {
     buildActiveEnv,
     materializeActiveEnv,
     runCommandInSandbox,
+    drawerTab,
+    setDrawerTab,
+    webPreviewUrl,
+    serveActiveApp,
+    runBrowserTestForEnv,
+    lastBrowserTest,
   } = useSandboxStore();
 
   const { getActiveEnvironment } = useChatStore();
   const activeEnv = getActiveEnvironment();
 
   const [cmdInput, setCmdInput] = useState('');
+  const [showPty, setShowPty] = useState(false);
   const scrollViewRef = useRef<ScrollView>(null);
 
   useEffect(() => {
-    if (isDrawerOpen) {
+    if (isDrawerOpen && drawerTab === 'terminal') {
       setTimeout(() => {
         scrollViewRef.current?.scrollToEnd({ animated: true });
       }, 80);
     }
-  }, [isDrawerOpen, logs.length]);
+  }, [isDrawerOpen, logs.length, drawerTab]);
 
   if (!isDrawerOpen) return null;
 
@@ -72,6 +91,7 @@ export const SandboxTerminalDrawer: React.FC = () => {
     try {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     } catch (e) {}
+    setDrawerTab('terminal');
     runTestsForEnv();
   };
 
@@ -79,6 +99,7 @@ export const SandboxTerminalDrawer: React.FC = () => {
     try {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     } catch (e) {}
+    setDrawerTab('terminal');
     buildActiveEnv();
   };
 
@@ -87,6 +108,22 @@ export const SandboxTerminalDrawer: React.FC = () => {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     } catch (e) {}
     materializeActiveEnv();
+  };
+
+  const handleServe = () => {
+    try {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    } catch (e) {}
+    setDrawerTab('preview');
+    serveActiveApp();
+  };
+
+  const handleBrowserTest = () => {
+    try {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    } catch (e) {}
+    setDrawerTab('browser');
+    runBrowserTestForEnv();
   };
 
   const getStatusColor = () => {
@@ -105,6 +142,17 @@ export const SandboxTerminalDrawer: React.FC = () => {
     }
   };
 
+  const TabBtn = ({ id, label, icon }: { id: DrawerTab; label: string; icon: React.ReactNode }) => (
+    <TouchableOpacity
+      style={[styles.tabBtn, drawerTab === id && styles.tabBtnActive]}
+      onPress={() => setDrawerTab(id)}
+      activeOpacity={0.75}
+    >
+      {icon}
+      <Text style={[styles.tabBtnText, drawerTab === id && styles.tabBtnTextActive]}>{label}</Text>
+    </TouchableOpacity>
+  );
+
   return (
     <Modal
       visible={isDrawerOpen}
@@ -114,7 +162,6 @@ export const SandboxTerminalDrawer: React.FC = () => {
     >
       <View style={styles.overlay}>
         <SafeAreaView style={styles.sheetContainer}>
-          {/* Header Bar */}
           <View style={styles.header}>
             <View style={styles.headerLeft}>
               <Terminal size={16} color={Colors.brand.emerald} />
@@ -134,7 +181,6 @@ export const SandboxTerminalDrawer: React.FC = () => {
               </View>
             </View>
 
-            {/* Target Toggle */}
             <View style={styles.headerRight}>
               <TouchableOpacity
                 style={[styles.targetBtn, target === 'local_mac' && styles.targetBtnActive]}
@@ -168,7 +214,24 @@ export const SandboxTerminalDrawer: React.FC = () => {
             </View>
           </View>
 
-          {/* Quick Actions Bar */}
+          <View style={styles.tabRow}>
+            <TabBtn
+              id="terminal"
+              label="Terminal"
+              icon={<Terminal size={11} color={drawerTab === 'terminal' ? Colors.brand.emerald : Colors.text.tertiary} />}
+            />
+            <TabBtn
+              id="preview"
+              label="Live Preview"
+              icon={<Globe size={11} color={drawerTab === 'preview' ? Colors.brand.emerald : Colors.text.tertiary} />}
+            />
+            <TabBtn
+              id="browser"
+              label="Browser Test"
+              icon={<Camera size={11} color={drawerTab === 'browser' ? Colors.brand.emerald : Colors.text.tertiary} />}
+            />
+          </View>
+
           <View style={styles.toolbar}>
             <View style={styles.toolbarLeft}>
               <TouchableOpacity
@@ -188,82 +251,190 @@ export const SandboxTerminalDrawer: React.FC = () => {
                 disabled={status === 'building'}
               >
                 <Hammer size={12} color={Colors.text.primary} />
-                <Text style={styles.toolBtnSecondaryText}>Build & Check</Text>
+                <Text style={styles.toolBtnSecondaryText}>Build</Text>
               </TouchableOpacity>
 
-              <TouchableOpacity
-                style={styles.toolBtnSecondary}
-                onPress={handleSync}
-                activeOpacity={0.8}
-              >
+              <TouchableOpacity style={styles.toolBtnSecondary} onPress={handleSync} activeOpacity={0.8}>
                 <Play size={11} color={Colors.brand.emerald} />
-                <Text style={styles.toolBtnSecondaryText}>Sync Files</Text>
+                <Text style={styles.toolBtnSecondaryText}>Sync</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity style={styles.toolBtnSecondary} onPress={handleServe} activeOpacity={0.8}>
+                <Globe size={11} color={Colors.brand.sky} />
+                <Text style={styles.toolBtnSecondaryText}>Serve</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity style={styles.toolBtnSecondary} onPress={handleBrowserTest} activeOpacity={0.8}>
+                <Camera size={11} color={Colors.brand.amber} />
+                <Text style={styles.toolBtnSecondaryText}>Browser</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.toolBtnSecondary} onPress={() => setShowPty((v) => !v)} activeOpacity={0.8}>
+                <Terminal size={11} color={Colors.brand.sky} />
+                <Text style={styles.toolBtnSecondaryText}>PTY</Text>
               </TouchableOpacity>
             </View>
 
-            <TouchableOpacity
-              style={styles.clearBtn}
-              onPress={clearLogs}
-              activeOpacity={0.7}
-            >
+            <TouchableOpacity style={styles.clearBtn} onPress={clearLogs} activeOpacity={0.7}>
               <Trash2 size={12} color={Colors.text.tertiary} />
             </TouchableOpacity>
           </View>
 
-          {/* Terminal Logs View */}
-          <View style={styles.terminalWindow}>
-            <ScrollView
-              ref={scrollViewRef}
-              style={styles.terminalScroll}
-              showsVerticalScrollIndicator={true}
-              nestedScrollEnabled
-            >
-              {logs.map((line, idx) => {
-                const isErr = line.includes('[STDERR]') || line.includes('Error:') || line.includes('FAILED');
-                const isSuccess = line.includes('PASSED') || line.includes('✓');
-                const isCmd = line.startsWith('$');
+          {showPty && activeEnv ? (
+            <View style={{ padding: 8, maxHeight: 280 }}>
+              <PtyTerminalBubble envId={activeEnv.id} />
+            </View>
+          ) : null}
 
-                return (
-                  <Text
-                    key={idx}
-                    style={[
-                      styles.logLine,
-                      isErr && styles.logLineErr,
-                      isSuccess && styles.logLineSuccess,
-                      isCmd && styles.logLineCmd,
-                    ]}
-                    selectable
-                  >
-                    {line}
+          {drawerTab === 'terminal' && (
+            <>
+              <View style={styles.terminalWindow}>
+                <ScrollView
+                  ref={scrollViewRef}
+                  style={styles.terminalScroll}
+                  showsVerticalScrollIndicator={true}
+                  nestedScrollEnabled
+                >
+                  {logs.map((line, idx) => {
+                    const isErr =
+                      line.includes('[STDERR]') || line.includes('Error:') || line.includes('FAILED');
+                    const isSuccess = line.includes('PASSED') || line.includes('✓');
+                    const isCmd = line.startsWith('$');
+
+                    return (
+                      <Text
+                        key={idx}
+                        style={[
+                          styles.logLine,
+                          isErr && styles.logLineErr,
+                          isSuccess && styles.logLineSuccess,
+                          isCmd && styles.logLineCmd,
+                        ]}
+                        selectable
+                      >
+                        {line}
+                      </Text>
+                    );
+                  })}
+                </ScrollView>
+              </View>
+
+              <View style={styles.commandDock}>
+                <Text style={styles.promptSymbol}>$</Text>
+                <TextInput
+                  style={styles.cmdInput}
+                  value={cmdInput}
+                  onChangeText={setCmdInput}
+                  placeholder="Execute in sandbox (e.g. pytest, python3 main.py, ls -la)..."
+                  placeholderTextColor={Colors.text.tertiary}
+                  onSubmitEditing={handleRunCommand}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  returnKeyType="send"
+                />
+                <TouchableOpacity
+                  style={[styles.sendBtn, !cmdInput.trim() && styles.sendBtnDisabled]}
+                  onPress={handleRunCommand}
+                  disabled={!cmdInput.trim()}
+                  activeOpacity={0.7}
+                >
+                  <CornerDownLeft size={13} color={cmdInput.trim() ? '#09090B' : Colors.text.tertiary} />
+                </TouchableOpacity>
+              </View>
+            </>
+          )}
+
+          {drawerTab === 'preview' && (
+            <View style={styles.previewPane}>
+              <View style={styles.previewBar}>
+                <Text style={styles.previewUrl} numberOfLines={1}>
+                  {webPreviewUrl || 'No live server — tap Serve'}
+                </Text>
+                <TouchableOpacity style={styles.toolBtnSecondary} onPress={handleServe} activeOpacity={0.8}>
+                  <Text style={styles.toolBtnSecondaryText}>{webPreviewUrl ? 'Restart' : 'Start'}</Text>
+                </TouchableOpacity>
+              </View>
+              {webPreviewUrl && Platform.OS === 'web' ? (
+                React.createElement('iframe', {
+                  title: 'sandbox-preview',
+                  src: webPreviewUrl,
+                  style: {
+                    flex: 1,
+                    width: '100%',
+                    height: '100%',
+                    border: 'none',
+                    background: '#fff',
+                  } as any,
+                })
+              ) : webPreviewUrl && WebView ? (
+                <WebView
+                  source={{ uri: webPreviewUrl }}
+                  style={{ flex: 1, backgroundColor: '#fff' }}
+                  allowFileAccess
+                  originWhitelist={['*']}
+                />
+              ) : webPreviewUrl ? (
+                <View style={styles.previewFallback}>
+                  <Text style={styles.logLine}>
+                    Preview URL ready (open in browser):
                   </Text>
-                );
-              })}
-            </ScrollView>
-          </View>
+                  <Text style={[styles.logLine, styles.logLineCmd]} selectable>
+                    {webPreviewUrl}
+                  </Text>
+                  <Text style={styles.logLineDim}>
+                    Install react-native-webview for in-app preview on native.
+                  </Text>
+                </View>
+              ) : (
+                <View style={styles.previewFallback}>
+                  <Text style={styles.logLineDim}>
+                    Start a persistent app with Serve. The runner proxies at /api/sandbox/preview/:envId/*
+                  </Text>
+                </View>
+              )}
+            </View>
+          )}
 
-          {/* Bottom Interactive Command Dock */}
-          <View style={styles.commandDock}>
-            <Text style={styles.promptSymbol}>$</Text>
-            <TextInput
-              style={styles.cmdInput}
-              value={cmdInput}
-              onChangeText={setCmdInput}
-              placeholder="Execute in sandbox (e.g. pytest, python3 main.py, ls -la)..."
-              placeholderTextColor={Colors.text.tertiary}
-              onSubmitEditing={handleRunCommand}
-              autoCapitalize="none"
-              autoCorrect={false}
-              returnKeyType="send"
-            />
-            <TouchableOpacity
-              style={[styles.sendBtn, !cmdInput.trim() && styles.sendBtnDisabled]}
-              onPress={handleRunCommand}
-              disabled={!cmdInput.trim()}
-              activeOpacity={0.7}
-            >
-              <CornerDownLeft size={13} color={cmdInput.trim() ? '#09090B' : Colors.text.tertiary} />
-            </TouchableOpacity>
-          </View>
+          {drawerTab === 'browser' && (
+            <View style={styles.previewPane}>
+              <View style={styles.previewBar}>
+                <Text style={styles.previewUrl} numberOfLines={1}>
+                  {lastBrowserTest?.ok
+                    ? `OK · ${lastBrowserTest.title || 'untitled'} · ${lastBrowserTest.url || ''}`
+                    : lastBrowserTest?.error || 'Headed Playwright visual test'}
+                </Text>
+                <TouchableOpacity style={styles.toolBtnPrimary} onPress={handleBrowserTest} activeOpacity={0.8}>
+                  <Camera size={12} color="#09090B" />
+                  <Text style={styles.toolBtnPrimaryText}>Run</Text>
+                </TouchableOpacity>
+              </View>
+              <ScrollView style={styles.terminalScroll} contentContainerStyle={{ padding: 12 }}>
+                {lastBrowserTest?.screenshotBase64 ? (
+                  <Image
+                    source={{ uri: lastBrowserTest.screenshotBase64 }}
+                    style={styles.screenshot}
+                    resizeMode="contain"
+                  />
+                ) : (
+                  <Text style={styles.logLineDim}>
+                    No screenshot yet. Run a browser test after Serve (Playwright headed on Mac; Xvfb on Linux/Spark).
+                  </Text>
+                )}
+                {lastBrowserTest?.artifacts?.screenshot ? (
+                  <Text style={styles.logLine} selectable>
+                    file: {lastBrowserTest.artifacts.screenshot}
+                  </Text>
+                ) : null}
+                {lastBrowserTest?.artifacts?.video ? (
+                  <Text style={styles.logLine} selectable>
+                    video: {lastBrowserTest.artifacts.video}
+                  </Text>
+                ) : null}
+                {lastBrowserTest?.hint ? (
+                  <Text style={[styles.logLine, styles.logLineErr]}>{lastBrowserTest.hint}</Text>
+                ) : null}
+              </ScrollView>
+            </View>
+          )}
         </SafeAreaView>
       </View>
     </Modal>
@@ -277,7 +448,7 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(0, 0, 0, 0.75)',
   },
   sheetContainer: {
-    height: '75%',
+    height: '78%',
     backgroundColor: '#07070A',
     borderTopLeftRadius: 16,
     borderTopRightRadius: 16,
@@ -361,6 +532,37 @@ const styles = StyleSheet.create({
     padding: 6,
     marginLeft: 4,
   },
+  tabRow: {
+    flexDirection: 'row',
+    gap: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(255, 255, 255, 0.06)',
+  },
+  tabBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 6,
+    backgroundColor: 'rgba(255,255,255,0.03)',
+  },
+  tabBtnActive: {
+    backgroundColor: 'rgba(16, 185, 129, 0.12)',
+    borderWidth: 1,
+    borderColor: 'rgba(16, 185, 129, 0.35)',
+  },
+  tabBtnText: {
+    fontSize: 10.5,
+    fontWeight: '600',
+    color: Colors.text.tertiary,
+    fontFamily: 'Menlo',
+  },
+  tabBtnTextActive: {
+    color: Colors.brand.emerald,
+  },
   toolbar: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -375,6 +577,8 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
+    flexWrap: 'wrap',
+    flex: 1,
   },
   toolBtnPrimary: {
     flexDirection: 'row',
@@ -425,6 +629,12 @@ const styles = StyleSheet.create({
     color: Colors.text.code,
     lineHeight: 16,
   },
+  logLineDim: {
+    fontSize: 11,
+    fontFamily: 'Menlo',
+    color: Colors.text.tertiary,
+    lineHeight: 16,
+  },
   logLineErr: {
     color: Colors.brand.rose,
   },
@@ -458,10 +668,8 @@ const styles = StyleSheet.create({
     fontSize: 11.5,
     color: Colors.text.primary,
     paddingVertical: 4,
-    ...Platform.select({
-      web: { outlineStyle: 'none' },
-    }),
-  },
+    ...(Platform.OS === 'web' ? ({ outlineStyle: 'none' } as object) : null),
+  } as any,
   sendBtn: {
     backgroundColor: Colors.brand.emerald,
     paddingHorizontal: 7,
@@ -470,5 +678,36 @@ const styles = StyleSheet.create({
   },
   sendBtnDisabled: {
     backgroundColor: 'rgba(255, 255, 255, 0.05)',
+  },
+  previewPane: {
+    flex: 1,
+    backgroundColor: '#040406',
+  },
+  previewBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(255,255,255,0.06)',
+  },
+  previewUrl: {
+    flex: 1,
+    fontSize: 10.5,
+    fontFamily: 'Menlo',
+    color: Colors.text.secondary,
+  },
+  previewFallback: {
+    flex: 1,
+    padding: 16,
+    gap: 8,
+  },
+  screenshot: {
+    width: '100%',
+    height: 360,
+    backgroundColor: '#111',
+    borderRadius: 8,
+    marginBottom: 10,
   },
 });

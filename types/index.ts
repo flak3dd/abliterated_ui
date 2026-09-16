@@ -27,6 +27,15 @@ export interface BuildPlanPrompt {
   planText?: string;
 }
 
+export interface MessageAttachment {
+  id: string;
+  name: string;
+  mime: string;
+  /** data URL or http(s) URI */
+  uri: string;
+  sizeBytes?: number;
+}
+
 export interface Message {
   id: string;
   role: Role;
@@ -38,6 +47,11 @@ export interface Message {
   agentRun?: import('./agent').AgentRun;
   ragCitations?: RagCitation[];
   buildPlanPrompt?: BuildPlanPrompt;
+  attachments?: MessageAttachment[];
+  /** If this assistant turn opened a live preview */
+  previewUrl?: string;
+  /** Parent message id when this is an edited resend branch point */
+  parentMessageId?: string;
 }
 
 export interface WorkspaceFile {
@@ -63,6 +77,8 @@ export interface ChatSession {
   envId: string;
   createdAt: number;
   updatedAt: number;
+  /** Forked from another session (edit-and-resend / branch) */
+  parentSessionId?: string;
 }
 
 export interface Endpoint {
