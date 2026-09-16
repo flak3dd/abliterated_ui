@@ -47,6 +47,21 @@ type ChatMsg = {
   name?: string;
 };
 
+
+/** Refresh messages[0] with base SYSTEM + round nudge. Never append system mid-conversation. */
+export function applyRoundSystemNudge(
+  messages: ChatMsg[],
+  baseSystem: string,
+  nudge: string
+): void {
+  const content = `${baseSystem}\n\n---\n[agent-round-nudge]\n${nudge}`;
+  if (messages[0]?.role === 'system') {
+    messages[0] = { role: 'system', content };
+  } else {
+    messages.unshift({ role: 'system', content });
+  }
+}
+
 export type AgentLoopHooks = {
   host: string;
   port: number;
@@ -111,6 +126,18 @@ export function extractToolCalls(msg: any): { id: string; name: string; args: Re
     return [{ id: 'call_json', name: named[1], args: parseArgs(named[2]) }];
   }
   return [];
+}
+
+function formatAgentFetchError(e: any, host: string, port: number): string {
+  const raw = String(e?.message || e || 'Agent loop failed');
+  if (!/NetworkError|Failed to fetch|Load failed|network error|NS_ERROR_FAILURE/i.test(raw)) {
+    return raw || 'Agent loop failed';
+  }
+  return (
+    `${raw} — Check Spark mesh is online (host ${host}:${port || 8000}), ` +
+    `that cloud-key-proxy :17332/spark is running, and that the browser can reach the proxy ` +
+    `(Firefox blocks direct LAN/CORS to 192.168.x).`
+  );
 }
 
 async function completeOnce(
@@ -203,16 +230,11 @@ export async function runBuildAgent(hooks: AgentLoopHooks): Promise<AgentRun> {
   };
 
   const injectRoundNudge = () => {
+    // vLLM requires system/developer messages consecutive at the beginning only.
+    // Merge phase/plan nudge into the single leading system message — never append.
     const phase = run.phase || 'explore';
     const nudge = phaseNudge(phase, run.plan || []);
-    // Replace or append a trailing system nudge (avoid unbounded growth: keep one)
-    const marker = '[agent-round-nudge]';
-    const last = messages[messages.length - 1];
-    if (last?.role === 'system' && String(last.content || '').includes(marker)) {
-      messages[messages.length - 1] = { role: 'system', content: `${marker}\n${nudge}` };
-    } else {
-      messages.push({ role: 'system', content: `${marker}\n${nudge}` });
-    }
+    applyRoundSystemNudge(messages, SYSTEM, nudge);
   };
 
   try {
@@ -444,7 +466,7 @@ export async function runBuildAgent(hooks: AgentLoopHooks): Promise<AgentRun> {
       patch({ status: 'cancelled', error: 'Stopped' });
       return run;
     }
-    patch({ status: 'failed', error: e?.message || 'Agent loop failed' });
+    patch({ status: 'failed', error: formatAgentFetchError(e, host, port) });
     return run;
   }
 }

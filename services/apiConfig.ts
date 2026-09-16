@@ -126,11 +126,78 @@ export function resolveCloudProxyUrl(hostOrUrl: string, path = ''): string | nul
   return cloudProxyUrlForPage(pageLocation(), hostOrUrl, path);
 }
 
+function hostOnly(hostOrUrl: string): string {
+  const raw = String(hostOrUrl || '').trim();
+  if (!raw) return '';
+  if (raw.startsWith('http://') || raw.startsWith('https://')) {
+    try {
+      return new URL(raw).hostname;
+    } catch {
+      return raw.replace(/^https?:\/\//, '').split('/')[0].split(':')[0];
+    }
+  }
+  return raw.split('/')[0].split(':')[0];
+}
+
+/** Private / Tailscale hosts that browsers (esp. Firefox) may block from web pages. */
+export function isBrowserProxiedLanHost(hostOrUrl: string): boolean {
+  const h = hostOnly(hostOrUrl).toLowerCase();
+  if (!h) return false;
+  if (h === 'localhost' || h === '127.0.0.1' || h === '::1') return false;
+  if (h.endsWith('.local')) return true;
+  if (/^192\.168\.\d{1,3}\.\d{1,3}$/.test(h)) return true;
+  if (/^10\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(h)) return true;
+  if (/^172\.(1[6-9]|2\d|3[0-1])\.\d{1,3}\.\d{1,3}$/.test(h)) return true;
+  if (/^100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\.\d{1,3}\.\d{1,3}$/.test(h)) return true;
+  return false;
+}
+
+/**
+ * Same-origin-safe Spark / LAN proxy via local cloud-key-proxy (:17332).
+ * Avoids Firefox Local Network Access / CORS failures when Expo web
+ * would otherwise fetch http://192.168.x.x:8000 directly.
+ */
+export function sparkProxyUrlForPage(
+  page: { protocol?: string; hostname?: string; origin?: string } | null,
+  hostOrUrl: string,
+  port = 8000,
+  path = ''
+): string | null {
+  if (!page) return null;
+  if (cloudProviderFromHost(hostOrUrl)) return null;
+  if (!isBrowserProxiedLanHost(hostOrUrl)) return null;
+
+  const host = hostOnly(hostOrUrl);
+  if (!host) return null;
+  const cleanPath = path ? (path.startsWith('/') ? path : `/${path}`) : '';
+  const portNum = Number(port) > 0 ? Number(port) : 8000;
+  const protocol = page.protocol || '';
+  const hostname = page.hostname || '';
+
+  if (protocol === 'http:' && (hostname === 'localhost' || hostname === '127.0.0.1')) {
+    return `http://127.0.0.1:17332/spark/${host}/${portNum}${cleanPath}`;
+  }
+  if (
+    protocol === 'http:' &&
+    (hostname.startsWith('192.168.') || hostname.startsWith('10.') || hostname.endsWith('.local'))
+  ) {
+    return `http://${hostname}:17332/spark/${host}/${portNum}${cleanPath}`;
+  }
+  return null;
+}
+
+export function resolveSparkProxyUrl(hostOrUrl: string, port = 8000, path = ''): string | null {
+  return sparkProxyUrlForPage(pageLocation(), hostOrUrl, port, path);
+}
+
 export function resolveApiUrl(hostOrUrl: string, port = 8000, path = ''): string {
   const cleanPath = path ? (path.startsWith('/') ? path : `/${path}`) : '';
 
-  const proxied = resolveCloudProxyUrl(hostOrUrl, cleanPath);
-  if (proxied) return proxied;
+  const cloudProxied = resolveCloudProxyUrl(hostOrUrl, cleanPath);
+  if (cloudProxied) return cloudProxied;
+
+  const sparkProxied = resolveSparkProxyUrl(hostOrUrl, port, cleanPath);
+  if (sparkProxied) return sparkProxied;
 
   // Already a full qualified HTTP/HTTPS URL
   if (hostOrUrl.startsWith('http://') || hostOrUrl.startsWith('https://')) {
@@ -204,4 +271,35 @@ export function buildApiHeaders(apiKey?: string, extraHeaders?: Record<string, s
   }
 
   return headers;
+}
+
+/**
+ * Authorization headers for Hugging Face Hub (gated models / downloads).
+ * Prefer the Radar-saved mesh token; callers may also pass a process env token
+ * (HF_TOKEN / HUGGING_FACE_HUB_TOKEN) on the server side.
+ */
+export function buildHuggingFaceHeaders(
+  token?: string | null,
+  extraHeaders?: Record<string, string>
+): Record<string, string> {
+  const headers: Record<string, string> = {
+    Accept: 'application/json',
+    ...extraHeaders,
+  };
+  const trimmed = (token || '').trim();
+  if (trimmed) {
+    headers['Authorization'] = `Bearer ${trimmed}`;
+  }
+  return headers;
+}
+
+/** Resolve HF hub token from common env names (Node / scripts only). */
+export function resolveHuggingFaceTokenFromEnv(
+  env?: Record<string, string | undefined>
+): string {
+  const p = typeof globalThis !== 'undefined' ? (globalThis as { process?: { env?: Record<string, string | undefined> } }).process : undefined;
+  const targetEnv = env || p?.env || {};
+  return (
+    (targetEnv.HF_TOKEN || targetEnv.HUGGING_FACE_HUB_TOKEN || targetEnv.HUGGINGFACE_HUB_TOKEN || '').trim()
+  );
 }

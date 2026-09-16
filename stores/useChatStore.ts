@@ -4,7 +4,12 @@ import { Message, ChatSession, SessionEnvironment, WorkspaceFile, SwarmSession }
 import { useMeshStore } from './useMeshStore';
 import { useSwarmStore, registerSwarmListeners } from './useSwarmStore';
 import { useAgentStore } from './useAgentStore';
-import { evaluateAgentGate } from '../services/agent/gate';
+import {
+  evaluateAgentGate,
+  evaluateBuildPlanSessionGate,
+  isBuildPlanApproveText,
+  draftLocalBuildPlan,
+} from '../services/agent/gate';
 import type { AgentRun } from '../types/agent';
 import { evaluateSwarmNeed } from '../services/swarmService';
 import { streamChatCompletion } from '../services/vllmService';
@@ -42,6 +47,8 @@ interface ChatState {
   clearCurrentSession: () => void;
   sendMessage: (text: string) => Promise<void>;
   continueAgentRun: (prior: import('../types/agent').AgentRun) => Promise<void>;
+  draftBuildPlan: (promptMsgId?: string) => Promise<void>;
+  approveBuildPlanAndStart: (promptMsgId?: string) => Promise<void>;
   stopStreaming: () => void;
   loadFromStorage: () => Promise<void>;
   saveToStorage: () => Promise<void>;
@@ -211,6 +218,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
       messages: { ...state.messages, [newId]: [] },
     }));
 
+    // New chat session → BUILD plan gate resets (new sessionId has no ready flag).
+    useAgentStore.getState().clearBuildPlanSession(newId);
+
     markEnvAllDirty(newEnv.id, Object.keys(newEnv.files));
     void get().flushSave();
     return newId;
@@ -248,6 +258,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         environments: remainingEnvironments,
       };
     });
+    useAgentStore.getState().clearBuildPlanSession(id);
     void get().flushSave();
   },
 
@@ -261,6 +272,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
         [activeId]: [],
       },
     }));
+    // Cleared transcript → treat as fresh for BUILD plan gate.
+    useAgentStore.getState().clearBuildPlanSession(activeId);
     scheduleSave();
   },
 
@@ -497,6 +510,249 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
       if (agentGate.run && activeEnv) {
         const envId = activeEnv.id;
+        const agentStore = useAgentStore.getState();
+        const planGate = evaluateBuildPlanSessionGate({
+          agentWouldRun: true,
+          sessionPlanReady: agentStore.isBuildPlanReady(currentSessionId!),
+        });
+
+        // --- First BUILD in this session: prompt for plan (do not start tools yet) ---
+        if (planGate.prompt) {
+          const pending = agentStore.getPendingBuild(currentSessionId!);
+          const trimmed = text.trim();
+
+          // User replied "start build" while a draft exists → approve & run
+          if (
+            pending &&
+            isBuildPlanApproveText(trimmed) &&
+            pending.planText?.trim()
+          ) {
+            agentStore.markBuildPlanReady(currentSessionId!);
+            const goalWithPlan =
+              `${pending.goal}\n\n## Approved build plan\n${pending.planText.trim()}`;
+            try {
+              const finished = await agentStore.startAgentRun({
+                goal: goalWithPlan,
+                sessionId: currentSessionId!,
+                envId,
+                signal: controller.signal,
+                getEnv: () => get().environments[envId] || null,
+                writeFile: (path, content, language) => {
+                  get().addOrUpdateFile(envId, path, content, language);
+                },
+                onUpdate: (run, content) => {
+                  set((state) => {
+                    const sessionMsgs = [...(state.messages[currentSessionId!] || [])];
+                    const idx = sessionMsgs.findIndex((m) => m.id === assistantMsgId);
+                    if (idx === -1) return state;
+                    sessionMsgs[idx] = {
+                      ...sessionMsgs[idx],
+                      content,
+                      agentRun: run,
+                      buildPlanPrompt: undefined,
+                    };
+                    return {
+                      messages: { ...state.messages, [currentSessionId!]: sessionMsgs },
+                    };
+                  });
+                },
+              });
+              agentStore.setPendingBuild(currentSessionId!, null);
+              set((state) => {
+                const sessionMsgs = [...(state.messages[currentSessionId!] || [])];
+                const idx = sessionMsgs.findIndex((m) => m.id === assistantMsgId);
+                if (idx !== -1) {
+                  const content =
+                    finished.summary && finished.summary !== finished.error
+                      ? finished.summary
+                      : finished.status === 'failed' && finished.error
+                      ? ''
+                      : finished.summary ||
+                        finished.error ||
+                        sessionMsgs[idx].content ||
+                        (finished.status === 'failed' ? 'Agent failed.' : 'Agent finished.');
+                  sessionMsgs[idx] = {
+                    ...sessionMsgs[idx],
+                    content,
+                    agentRun: finished,
+                    buildPlanPrompt: undefined,
+                  };
+                }
+                const stillMine = state.activeAbortController === controller;
+                return {
+                  messages: { ...state.messages, [currentSessionId!]: sessionMsgs },
+                  ...(stillMine
+                    ? { isStreaming: false, streamingSessionId: null, activeAbortController: null }
+                    : {}),
+                };
+              });
+            } catch (agentErr: any) {
+              const errText = agentErr?.message || 'BUILD agent failed to start';
+              const failedRun: AgentRun = {
+                id: 'agent_err_' + Date.now(),
+                sessionId: currentSessionId!,
+                envId,
+                goal: pending.goal,
+                status: 'failed',
+                steps: [],
+                stepCount: 0,
+                execCount: 0,
+                error: errText,
+                summary: errText,
+                createdAt: Date.now(),
+                updatedAt: Date.now(),
+              };
+              set((state) => {
+                const sessionMsgs = [...(state.messages[currentSessionId!] || [])];
+                const idx = sessionMsgs.findIndex((m) => m.id === assistantMsgId);
+                if (idx !== -1) {
+                  sessionMsgs[idx] = {
+                    ...sessionMsgs[idx],
+                    content: errText,
+                    agentRun: failedRun,
+                    buildPlanPrompt: undefined,
+                  };
+                }
+                const stillMine = state.activeAbortController === controller;
+                return {
+                  messages: { ...state.messages, [currentSessionId!]: sessionMsgs },
+                  ...(stillMine
+                    ? { isStreaming: false, streamingSessionId: null, activeAbortController: null }
+                    : {}),
+                };
+              });
+            }
+            void get().flushSave();
+            return;
+          }
+
+          // Approve keyword but no draft yet → keep pending goal, nudge
+          if (pending && isBuildPlanApproveText(trimmed) && !pending.planText?.trim()) {
+            const promptContent =
+              'Create a build plan first — tap **Draft plan** or reply with your plan, then **Start BUILD**.';
+            set((state) => {
+              const sessionMsgs = [...(state.messages[currentSessionId!] || [])];
+              const idx = sessionMsgs.findIndex((m) => m.id === assistantMsgId);
+              if (idx !== -1) {
+                sessionMsgs[idx] = {
+                  ...sessionMsgs[idx],
+                  content: promptContent,
+                  buildPlanPrompt: {
+                    goal: pending.goal,
+                    status: 'awaiting',
+                    planText: pending.planText,
+                  },
+                };
+              }
+              const priorId = pending.promptMsgId;
+              if (priorId) {
+                const pIdx = sessionMsgs.findIndex((m) => m.id === priorId);
+                if (pIdx !== -1 && sessionMsgs[pIdx].buildPlanPrompt) {
+                  sessionMsgs[pIdx] = {
+                    ...sessionMsgs[pIdx],
+                    content: promptContent,
+                    buildPlanPrompt: {
+                      goal: pending.goal,
+                      status: 'awaiting',
+                      planText: pending.planText,
+                    },
+                  };
+                }
+              }
+              const stillMine = state.activeAbortController === controller;
+              return {
+                messages: { ...state.messages, [currentSessionId!]: sessionMsgs },
+                ...(stillMine
+                  ? { isStreaming: false, streamingSessionId: null, activeAbortController: null }
+                  : {}),
+              };
+            });
+            void get().flushSave();
+            return;
+          }
+
+          // User sent their own plan text (not approve keyword) while awaiting → store draft
+          if (pending && !isBuildPlanApproveText(trimmed) && trimmed.length > 12) {
+            agentStore.setPendingBuild(currentSessionId!, {
+              ...pending,
+              planText: trimmed,
+            });
+            const promptContent =
+              'Got your plan. Review it below, then tap **Start BUILD** (or say **start build**).';
+            set((state) => {
+              const sessionMsgs = [...(state.messages[currentSessionId!] || [])];
+              const idx = sessionMsgs.findIndex((m) => m.id === assistantMsgId);
+              if (idx !== -1) {
+                sessionMsgs[idx] = {
+                  ...sessionMsgs[idx],
+                  content: promptContent,
+                  buildPlanPrompt: {
+                    goal: pending.goal,
+                    status: 'ready',
+                    planText: trimmed,
+                  },
+                };
+              }
+              // Also refresh prior prompt card if present
+              const priorId = pending.promptMsgId;
+              if (priorId) {
+                const pIdx = sessionMsgs.findIndex((m) => m.id === priorId);
+                if (pIdx !== -1 && sessionMsgs[pIdx].buildPlanPrompt) {
+                  sessionMsgs[pIdx] = {
+                    ...sessionMsgs[pIdx],
+                    buildPlanPrompt: {
+                      goal: pending.goal,
+                      status: 'ready',
+                      planText: trimmed,
+                    },
+                  };
+                }
+              }
+              const stillMine = state.activeAbortController === controller;
+              return {
+                messages: { ...state.messages, [currentSessionId!]: sessionMsgs },
+                ...(stillMine
+                  ? { isStreaming: false, streamingSessionId: null, activeAbortController: null }
+                  : {}),
+              };
+            });
+            void get().flushSave();
+            return;
+          }
+
+          // Fresh first BUILD (or re-prompt with new goal)
+          const promptContent =
+            'Before BUILD runs, create a build plan. Tap **Draft plan** (or reply with your plan), then **Start BUILD**.';
+          agentStore.setPendingBuild(currentSessionId!, {
+            goal: trimmed,
+            promptMsgId: assistantMsgId,
+          });
+          set((state) => {
+            const sessionMsgs = [...(state.messages[currentSessionId!] || [])];
+            const idx = sessionMsgs.findIndex((m) => m.id === assistantMsgId);
+            if (idx !== -1) {
+              sessionMsgs[idx] = {
+                ...sessionMsgs[idx],
+                content: promptContent,
+                buildPlanPrompt: {
+                  goal: trimmed,
+                  status: 'awaiting',
+                },
+              };
+            }
+            const stillMine = state.activeAbortController === controller;
+            return {
+              messages: { ...state.messages, [currentSessionId!]: sessionMsgs },
+              ...(stillMine
+                ? { isStreaming: false, streamingSessionId: null, activeAbortController: null }
+                : {}),
+            };
+          });
+          void get().flushSave();
+          return;
+        }
+
+        // --- Plan already approved this session: run BUILD immediately ---
         try {
           const finished = await useAgentStore.getState().startAgentRun({
             goal: text,
@@ -523,11 +779,16 @@ export const useChatStore = create<ChatState>((set, get) => ({
             const sessionMsgs = [...(state.messages[currentSessionId!] || [])];
             const idx = sessionMsgs.findIndex((m) => m.id === assistantMsgId);
             if (idx !== -1) {
+              // Prefer card error over duplicating NetworkError in bubble + card.
               const content =
-                finished.summary ||
-                finished.error ||
-                sessionMsgs[idx].content ||
-                (finished.status === 'failed' ? 'Agent failed.' : 'Agent finished.');
+                finished.summary && finished.summary !== finished.error
+                  ? finished.summary
+                  : finished.status === 'failed' && finished.error
+                  ? ''
+                  : finished.summary ||
+                    finished.error ||
+                    sessionMsgs[idx].content ||
+                    (finished.status === 'failed' ? 'Agent failed.' : 'Agent finished.');
               sessionMsgs[idx] = {
                 ...sessionMsgs[idx],
                 content,
@@ -870,6 +1131,336 @@ CODE RULES: put the exact relative path in every fence (\`\`\`python app.py). Sh
     }
   },
 
+  draftBuildPlan: async (promptMsgId) => {
+    const currentSessionId = get().activeSessionId;
+    if (!currentSessionId || get().isStreaming) return;
+    const agentStore = useAgentStore.getState();
+    const pending = agentStore.getPendingBuild(currentSessionId);
+    if (!pending?.goal) return;
+
+    const msgId =
+      promptMsgId ||
+      pending.promptMsgId ||
+      [...(get().messages[currentSessionId] || [])]
+        .reverse()
+        .find((m) => m.buildPlanPrompt)?.id;
+    if (!msgId) return;
+
+    const controller = new AbortController();
+    set((state) => {
+      const sessionMsgs = [...(state.messages[currentSessionId] || [])];
+      const idx = sessionMsgs.findIndex((m) => m.id === msgId);
+      if (idx !== -1) {
+        sessionMsgs[idx] = {
+          ...sessionMsgs[idx],
+          content: 'Drafting a build plan…',
+          buildPlanPrompt: {
+            goal: pending.goal,
+            status: 'drafting',
+            planText: sessionMsgs[idx].buildPlanPrompt?.planText,
+          },
+        };
+      }
+      return {
+        isStreaming: true,
+        streamingSessionId: currentSessionId,
+        activeAbortController: controller,
+        messages: { ...state.messages, [currentSessionId]: sessionMsgs },
+      };
+    });
+
+    let planText = '';
+    try {
+      const mesh = useMeshStore.getState();
+      const activeEp =
+        mesh.getActiveEndpoint?.() ||
+        mesh.candidates.find((c) => c.host === mesh.activeHost);
+      const apiKey =
+        activeEp?.provider === 'featherless'
+          ? mesh.featherlessApiKey
+          : mesh.abliteratedApiKey;
+      const model =
+        useModelSession.getState().resolvedChatId() ||
+        mesh.servingModel ||
+        activeEp?.defaultModel;
+      await streamChatCompletion({
+        host: mesh.activeHost,
+        port: mesh.activePort || 8000,
+        model,
+        apiKey,
+        antiHallucination: true,
+        max_tokens: 1200,
+        abortSignal: controller.signal,
+        messages: [
+          {
+            role: 'system',
+            content:
+              'You are a senior engineer drafting a concise BUILD plan for a sandbox coding agent. ' +
+              'Output markdown only: a short ## Build plan with goal, numbered steps (explore → implement → test → verify), ' +
+              'and key files to touch. No tool calls. No code dumps. Max ~250 words.',
+          },
+          {
+            role: 'user',
+            content: `Draft a build plan for this goal:\n\n${pending.goal}`,
+          },
+        ],
+        callbacks: {
+          onToken: (token, isReasoning) => {
+            if (isReasoning) return;
+            planText += token;
+            set((state) => {
+              const sessionMsgs = [...(state.messages[currentSessionId] || [])];
+              const idx = sessionMsgs.findIndex((m) => m.id === msgId);
+              if (idx === -1) return state;
+              sessionMsgs[idx] = {
+                ...sessionMsgs[idx],
+                content: 'Drafting a build plan…',
+                buildPlanPrompt: {
+                  goal: pending.goal,
+                  status: 'drafting',
+                  planText,
+                },
+              };
+              return {
+                messages: { ...state.messages, [currentSessionId]: sessionMsgs },
+              };
+            });
+          },
+          onComplete: (finalContent) => {
+            planText = (finalContent || planText || '').trim();
+          },
+          onError: () => {
+            /* fall through to local draft */
+          },
+        },
+      });
+    } catch {
+      /* local fallback below */
+    }
+
+    if (!planText.trim() || planText.includes('[⚠️ Backend Connection Error]')) {
+      planText = draftLocalBuildPlan(pending.goal);
+    }
+
+    agentStore.setPendingBuild(currentSessionId, {
+      ...pending,
+      planText: planText.trim(),
+      promptMsgId: msgId,
+    });
+
+    set((state) => {
+      const sessionMsgs = [...(state.messages[currentSessionId] || [])];
+      const idx = sessionMsgs.findIndex((m) => m.id === msgId);
+      if (idx !== -1) {
+        sessionMsgs[idx] = {
+          ...sessionMsgs[idx],
+          content:
+            'Review the draft plan below, then tap **Start BUILD** (or say **start build**).',
+          buildPlanPrompt: {
+            goal: pending.goal,
+            status: 'ready',
+            planText: planText.trim(),
+          },
+        };
+      }
+      const stillMine = state.activeAbortController === controller;
+      return {
+        messages: { ...state.messages, [currentSessionId]: sessionMsgs },
+        ...(stillMine
+          ? { isStreaming: false, streamingSessionId: null, activeAbortController: null }
+          : {}),
+      };
+    });
+    void get().flushSave();
+  },
+
+  approveBuildPlanAndStart: async (promptMsgId) => {
+    const currentSessionId = get().activeSessionId;
+    if (!currentSessionId || get().isStreaming) return;
+    const agentStore = useAgentStore.getState();
+    const pending = agentStore.getPendingBuild(currentSessionId);
+    if (!pending?.goal) return;
+
+    let planText = pending.planText?.trim() || '';
+    const msgId =
+      promptMsgId ||
+      pending.promptMsgId ||
+      [...(get().messages[currentSessionId] || [])]
+        .reverse()
+        .find((m) => m.buildPlanPrompt)?.id;
+
+    if (!planText && msgId) {
+      const m = (get().messages[currentSessionId] || []).find((x) => x.id === msgId);
+      planText = m?.buildPlanPrompt?.planText?.trim() || '';
+    }
+    if (!planText) {
+      // Require a draft — nudge UX
+      if (msgId) {
+        set((state) => {
+          const sessionMsgs = [...(state.messages[currentSessionId] || [])];
+          const idx = sessionMsgs.findIndex((m) => m.id === msgId);
+          if (idx !== -1) {
+            sessionMsgs[idx] = {
+              ...sessionMsgs[idx],
+              content:
+                'Create a build plan first — tap **Draft plan** or reply with your plan, then **Start BUILD**.',
+              buildPlanPrompt: {
+                goal: pending.goal,
+                status: 'awaiting',
+              },
+            };
+          }
+          return { messages: { ...state.messages, [currentSessionId]: sessionMsgs } };
+        });
+      }
+      return;
+    }
+
+    const currentSession = get().sessions.find((s) => s.id === currentSessionId);
+    const activeEnv = currentSession?.envId
+      ? get().environments[currentSession.envId]
+      : null;
+    if (!activeEnv) return;
+
+    const envId = activeEnv.id;
+    agentStore.markBuildPlanReady(currentSessionId);
+    agentStore.setPendingBuild(currentSessionId, null);
+
+    const goalWithPlan = `${pending.goal}\n\n## Approved build plan\n${planText}`;
+
+    const userMsg: Message = {
+      id: 'msg_' + Date.now(),
+      role: 'user',
+      content: 'Start BUILD (plan approved)',
+      timestamp: Date.now(),
+    };
+    const assistantMsgId = 'msg_' + (Date.now() + 1);
+    const assistantMsg: Message = {
+      id: assistantMsgId,
+      role: 'assistant',
+      content: '',
+      reasoning: '',
+      timestamp: Date.now(),
+    };
+    const controller = new AbortController();
+
+    set((state) => {
+      const sessionMsgs = [...(state.messages[currentSessionId] || [])];
+      // Clear prompt card on prior message
+      if (msgId) {
+        const pIdx = sessionMsgs.findIndex((m) => m.id === msgId);
+        if (pIdx !== -1 && sessionMsgs[pIdx].buildPlanPrompt) {
+          sessionMsgs[pIdx] = {
+            ...sessionMsgs[pIdx],
+            buildPlanPrompt: {
+              ...sessionMsgs[pIdx].buildPlanPrompt!,
+              status: 'ready',
+              planText,
+            },
+            content:
+              sessionMsgs[pIdx].content ||
+              'Plan approved — starting BUILD…',
+          };
+        }
+      }
+      return {
+        isStreaming: true,
+        streamingSessionId: currentSessionId,
+        activeAbortController: controller,
+        messages: {
+          ...state.messages,
+          [currentSessionId]: [...sessionMsgs, userMsg, assistantMsg],
+        },
+      };
+    });
+
+    try {
+      const finished = await useAgentStore.getState().startAgentRun({
+        goal: goalWithPlan,
+        sessionId: currentSessionId,
+        envId,
+        signal: controller.signal,
+        getEnv: () => get().environments[envId] || null,
+        writeFile: (path, content, language) => {
+          get().addOrUpdateFile(envId, path, content, language);
+        },
+        onUpdate: (run, content) => {
+          set((state) => {
+            const sessionMsgs = [...(state.messages[currentSessionId] || [])];
+            const idx = sessionMsgs.findIndex((m) => m.id === assistantMsgId);
+            if (idx === -1) return state;
+            sessionMsgs[idx] = { ...sessionMsgs[idx], content, agentRun: run };
+            return {
+              messages: { ...state.messages, [currentSessionId]: sessionMsgs },
+            };
+          });
+        },
+      });
+      set((state) => {
+        const sessionMsgs = [...(state.messages[currentSessionId] || [])];
+        const idx = sessionMsgs.findIndex((m) => m.id === assistantMsgId);
+        if (idx !== -1) {
+          const content =
+            finished.summary && finished.summary !== finished.error
+              ? finished.summary
+              : finished.status === 'failed' && finished.error
+              ? ''
+              : finished.summary ||
+                finished.error ||
+                sessionMsgs[idx].content ||
+                (finished.status === 'failed' ? 'Agent failed.' : 'Agent finished.');
+          sessionMsgs[idx] = {
+            ...sessionMsgs[idx],
+            content,
+            agentRun: finished,
+          };
+        }
+        const stillMine = state.activeAbortController === controller;
+        return {
+          messages: { ...state.messages, [currentSessionId]: sessionMsgs },
+          ...(stillMine
+            ? { isStreaming: false, streamingSessionId: null, activeAbortController: null }
+            : {}),
+        };
+      });
+    } catch (agentErr: any) {
+      const errText = agentErr?.message || 'BUILD agent failed to start';
+      const failedRun: AgentRun = {
+        id: 'agent_err_' + Date.now(),
+        sessionId: currentSessionId,
+        envId,
+        goal: pending.goal,
+        status: 'failed',
+        steps: [],
+        stepCount: 0,
+        execCount: 0,
+        error: errText,
+        summary: errText,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      };
+      set((state) => {
+        const sessionMsgs = [...(state.messages[currentSessionId] || [])];
+        const idx = sessionMsgs.findIndex((m) => m.id === assistantMsgId);
+        if (idx !== -1) {
+          sessionMsgs[idx] = {
+            ...sessionMsgs[idx],
+            content: errText,
+            agentRun: failedRun,
+          };
+        }
+        const stillMine = state.activeAbortController === controller;
+        return {
+          messages: { ...state.messages, [currentSessionId]: sessionMsgs },
+          ...(stillMine
+            ? { isStreaming: false, streamingSessionId: null, activeAbortController: null }
+            : {}),
+        };
+      });
+    }
+    void get().flushSave();
+  },
+
   continueAgentRun: async (prior) => {
     if (!prior || get().isStreaming) return;
     const currentSessionId = prior.sessionId || get().activeSessionId;
@@ -878,8 +1469,9 @@ CODE RULES: put the exact relative path in every fence (\`\`\`python app.py). Sh
     const activeEnv = envId ? get().environments[envId] : null;
     if (!activeEnv) return;
 
-    // Ensure agent mode on for gate UX
+    // Ensure agent mode on for gate UX; continuing implies plan already armed.
     useAgentStore.getState().setAgentMode(true);
+    useAgentStore.getState().markBuildPlanReady(currentSessionId);
 
     const userMsg: Message = {
       id: 'msg_' + Date.now(),

@@ -18,6 +18,15 @@ export interface RagCitation {
   snippet: string;
 }
 
+export type BuildPlanPromptStatus = 'awaiting' | 'drafting' | 'ready';
+
+/** First-BUILD session gate: ask for a plan before tool loop. */
+export interface BuildPlanPrompt {
+  goal: string;
+  status: BuildPlanPromptStatus;
+  planText?: string;
+}
+
 export interface Message {
   id: string;
   role: Role;
@@ -28,6 +37,7 @@ export interface Message {
   swarmSession?: SwarmSession;
   agentRun?: import('./agent').AgentRun;
   ragCitations?: RagCitation[];
+  buildPlanPrompt?: BuildPlanPrompt;
 }
 
 export interface WorkspaceFile {

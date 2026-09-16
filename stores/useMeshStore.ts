@@ -40,6 +40,7 @@ interface MeshState {
   simulationMode: boolean;
   featherlessApiKey: string;
   abliteratedApiKey: string;
+  huggingfaceApiKey: string;
   liveDiskModels: { name: string; bytes: number; shards: number }[];
   liveImageModels: string[];
 
@@ -49,7 +50,7 @@ interface MeshState {
   loadMeshMode: () => Promise<void>;
   setActiveHost: (host: string, port?: number) => void;
   selectEndpoint: (ep: Endpoint) => void;
-  setApiKey: (provider: 'abliterated' | 'featherless', key: string) => Promise<void>;
+  setApiKey: (provider: 'abliterated' | 'featherless' | 'huggingface', key: string) => Promise<void>;
   loadApiKeys: () => Promise<void>;
   toggleSimulationMode: (enabled?: boolean) => void;
   updateTelemetry: (partial: Partial<HardwareTelemetry>) => void;
@@ -420,6 +421,7 @@ export const useMeshStore = create<MeshState>((set, get) => ({
   simulationMode: false,
   featherlessApiKey: '',
   abliteratedApiKey: '',
+  huggingfaceApiKey: '',
   liveDiskModels: [],
   liveImageModels: [],
 
@@ -518,6 +520,7 @@ export const useMeshStore = create<MeshState>((set, get) => ({
         set({
           featherlessApiKey: parsed.featherlessApiKey || '',
           abliteratedApiKey: parsed.abliteratedApiKey || '',
+          huggingfaceApiKey: parsed.huggingfaceApiKey || '',
         });
       }
     } catch (e) {
@@ -525,18 +528,21 @@ export const useMeshStore = create<MeshState>((set, get) => ({
     }
   },
 
-  setApiKey: async (provider: 'abliterated' | 'featherless', key: string) => {
+  setApiKey: async (provider: 'abliterated' | 'featherless' | 'huggingface', key: string) => {
     const trimmed = key.trim();
     if (provider === 'featherless') {
       set({ featherlessApiKey: trimmed });
-    } else {
+    } else if (provider === 'abliterated') {
       set({ abliteratedApiKey: trimmed });
+    } else {
+      set({ huggingfaceApiKey: trimmed });
     }
 
     try {
       const current = {
         featherlessApiKey: provider === 'featherless' ? trimmed : get().featherlessApiKey,
         abliteratedApiKey: provider === 'abliterated' ? trimmed : get().abliteratedApiKey,
+        huggingfaceApiKey: provider === 'huggingface' ? trimmed : get().huggingfaceApiKey,
       };
       await AsyncStorage.setItem(MESH_KEYS_STORAGE, JSON.stringify(current));
     } catch (e) {

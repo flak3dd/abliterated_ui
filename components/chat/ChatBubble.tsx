@@ -11,6 +11,7 @@ import Animated, { FadeInUp, FadeIn } from 'react-native-reanimated';
 import { TestResultCard } from './TestResultCard';
 import { SwarmInspectorCard } from './SwarmInspectorCard';
 import { AgentRunCard } from './AgentRunCard';
+import { BuildPlanPromptCard } from './BuildPlanPrompt';
 import { useSandboxStore } from '../../stores/useSandboxStore';
 import { useChatStore } from '../../stores/useChatStore';
 import { useMeshStore } from '../../stores/useMeshStore';
@@ -495,6 +496,18 @@ export const ChatBubbleBase: React.FC<ChatBubbleProps> = ({
         {message.swarmSession && (
           <SwarmInspectorCard swarm={message.swarmSession} />
         )}
+        {message.buildPlanPrompt && (
+          <BuildPlanPromptCard
+            prompt={message.buildPlanPrompt}
+            disabled={isStreaming}
+            onDraft={() => {
+              void useChatStore.getState().draftBuildPlan(message.id);
+            }}
+            onStart={() => {
+              void useChatStore.getState().approveBuildPlanAndStart(message.id);
+            }}
+          />
+        )}
         {message.agentRun && (
           <AgentRunCard
             run={message.agentRun}
@@ -616,7 +629,8 @@ export const ChatBubble = React.memo(ChatBubbleBase, (prevProps, nextProps) => {
     prevProps.message.reasoning === nextProps.message.reasoning &&
     prevProps.message.groundingReport === nextProps.message.groundingReport &&
     prevProps.message.swarmSession === nextProps.message.swarmSession &&
-    prevProps.message.agentRun === nextProps.message.agentRun
+    prevProps.message.agentRun === nextProps.message.agentRun &&
+    prevProps.message.buildPlanPrompt === nextProps.message.buildPlanPrompt
   );
 });
 

@@ -27,8 +27,8 @@ const reqBody = JSON.stringify({
 
 const req = http.request(
   {
-    hostname: '127.0.0.1',
-    port: 8000,
+    hostname: process.env.SPARK_HOST || '192.168.4.103',
+    port: Number(process.env.SPARK_PORT || 8000),
     path: '/v1/chat/completions',
     method: 'POST',
     headers: {

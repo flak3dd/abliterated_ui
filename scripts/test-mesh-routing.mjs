@@ -125,10 +125,28 @@ const checks = [
     ) === 'https://web.abliterated.app/api/cloud/abliteration/v1/chat/completions',
   ],
   [
-    'LAN spark host is not proxied',
+    'LAN spark host is not cloud-proxied',
     api.cloudProxyUrlForPage(
       { protocol: 'http:', hostname: 'localhost', origin: 'http://localhost:8999' },
       '192.168.4.103',
+      '/v1/models'
+    ) === null,
+  ],
+  [
+    'LAN spark host is spark-proxied on local http page',
+    api.sparkProxyUrlForPage(
+      { protocol: 'http:', hostname: 'localhost', origin: 'http://localhost:8081' },
+      '192.168.4.103',
+      8000,
+      '/v1/chat/completions'
+    ) === 'http://127.0.0.1:17332/spark/192.168.4.103/8000/v1/chat/completions',
+  ],
+  [
+    'loopback spark host is not spark-proxied',
+    api.sparkProxyUrlForPage(
+      { protocol: 'http:', hostname: 'localhost', origin: 'http://localhost:8081' },
+      '127.0.0.1',
+      8000,
       '/v1/models'
     ) === null,
   ],

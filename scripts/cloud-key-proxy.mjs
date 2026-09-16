@@ -1,10 +1,13 @@
 #!/usr/bin/env node
 /**
- * Server-side cloud key proxy.
+ * Server-side cloud key + Spark LAN proxy.
  * Injects FEATHERLESS_API_KEY / ABLITERATION_API_KEY so the browser never holds secrets.
+ * Also proxies private Spark / LAN inference so Firefox (and similar) can avoid
+ * Local Network Access blocks on direct 192.168.x fetches from Expo web.
  *
  * Local:  http://127.0.0.1:17332/featherless/v1/models
  *         http://127.0.0.1:17332/abliteration/v1/chat/completions
+ *         http://127.0.0.1:17332/spark/192.168.4.103/8000/v1/chat/completions
  * Vercel: /api/cloud/:provider/...
  */
 import http from 'node:http';
@@ -74,51 +77,52 @@ function cors(res, origin) {
   res.setHeader('Vary', 'Origin');
 }
 
+function isAllowedSparkUpstream(host) {
+  const h = String(host || '').toLowerCase();
+  if (!h || h.includes('/') || h.includes('\\') || h.includes('@')) return false;
+  if (h === 'localhost' || h === '127.0.0.1' || h === '::1') return true;
+  if (h.endsWith('.local')) return true;
+  // RFC1918 + Tailscale CGNAT (100.64/10)
+  if (/^192\.168\.\d{1,3}\.\d{1,3}$/.test(h)) return true;
+  if (/^10\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(h)) return true;
+  if (/^172\.(1[6-9]|2\d|3[0-1])\.\d{1,3}\.\d{1,3}$/.test(h)) return true;
+  if (/^100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\.\d{1,3}\.\d{1,3}$/.test(h)) return true;
+  return false;
+}
+
+function defaultSparkUpstream() {
+  const host = process.env.SPARK_HOST || '192.168.4.103';
+  const port = Number(process.env.SPARK_PORT || 8000) || 8000;
+  return { host, port };
+}
+
 function parseProxyPath(urlPath) {
   const parts = String(urlPath || '').split('/').filter(Boolean);
   // /featherless/v1/models  OR  /api/cloud/featherless/v1/models
+  // /spark/192.168.4.103/8000/v1/models  OR  /spark/v1/models
   if (parts[0] === 'api' && parts[1] === 'cloud') parts.splice(0, 2);
+  if (parts[0] === 'spark') {
+    if (parts[1] && parts[2] && /^\d+$/.test(parts[2])) {
+      const host = parts[1];
+      const port = Number(parts[2]) || 8000;
+      const rest = '/' + parts.slice(3).join('/');
+      return { kind: 'spark', host, port, rest: rest === '/' ? '/v1' : rest };
+    }
+    const def = defaultSparkUpstream();
+    const rest = '/' + parts.slice(1).join('/');
+    return { kind: 'spark', host: def.host, port: def.port, rest: rest === '/' ? '/v1' : rest };
+  }
   const provider = parts[0];
   const rest = '/' + parts.slice(1).join('/');
-  return { provider, rest: rest === '/' ? '/v1' : rest };
+  return { kind: 'cloud', provider, rest: rest === '/' ? '/v1' : rest };
 }
 
-export async function proxyCloudRequest(req, res, urlPath, bodyBuf) {
+async function pipeUpstream(req, res, target, bodyBuf, extraHeaders = {}) {
   const origin = req.headers.origin || '*';
-  cors(res, origin);
-  if (req.method === 'OPTIONS') {
-    res.writeHead(204);
-    res.end();
-    return;
-  }
-
-  const { provider, rest } = parseProxyPath(urlPath);
-  const upstreamBase = UPSTREAM[provider];
-  if (!upstreamBase) {
-    res.writeHead(404, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ ok: false, error: 'Unknown cloud provider' }));
-    return;
-  }
-
-  const key = keyFor(provider) || clientKey(req);
-  if (!key) {
-    res.writeHead(503, { 'Content-Type': 'application/json' });
-    res.end(
-      JSON.stringify({
-        ok: false,
-        error: `Missing server key for ${provider}. Set FEATHERLESS_API_KEY or ABLITERATION_API_KEY in .env`,
-      })
-    );
-    return;
-  }
-
-  const search = String(req.url || '').includes('?') ? String(req.url).slice(String(req.url).indexOf('?')) : '';
-  const target = upstreamBase + rest + search;
   const headers = {
     Accept: req.headers.accept || 'application/json',
-    Authorization: 'Bearer ' + key,
-    'x-api-key': key,
     'User-Agent': 'abliterated-cloud-proxy/1.0 (compatible; curl/8.0)',
+    ...extraHeaders,
   };
   if (req.headers['content-type']) headers['Content-Type'] = req.headers['content-type'];
 
@@ -154,6 +158,62 @@ export async function proxyCloudRequest(req, res, urlPath, bodyBuf) {
   }
 }
 
+export async function proxyCloudRequest(req, res, urlPath, bodyBuf) {
+  const origin = req.headers.origin || '*';
+  cors(res, origin);
+  if (req.method === 'OPTIONS') {
+    res.writeHead(204);
+    res.end();
+    return;
+  }
+
+  const parsed = parseProxyPath(urlPath);
+  const search = String(req.url || '').includes('?') ? String(req.url).slice(String(req.url).indexOf('?')) : '';
+
+  if (parsed.kind === 'spark') {
+    if (!isAllowedSparkUpstream(parsed.host)) {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: false, error: 'Spark upstream host not allowed' }));
+      return;
+    }
+    const port = Number(parsed.port) || 8000;
+    if (port < 1 || port > 65535) {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: false, error: 'Invalid Spark upstream port' }));
+      return;
+    }
+    const target = `http://${parsed.host}:${port}${parsed.rest}${search}`;
+    await pipeUpstream(req, res, target, bodyBuf);
+    return;
+  }
+
+  const { provider, rest } = parsed;
+  const upstreamBase = UPSTREAM[provider];
+  if (!upstreamBase) {
+    res.writeHead(404, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ ok: false, error: 'Unknown cloud provider' }));
+    return;
+  }
+
+  const key = keyFor(provider) || clientKey(req);
+  if (!key) {
+    res.writeHead(503, { 'Content-Type': 'application/json' });
+    res.end(
+      JSON.stringify({
+        ok: false,
+        error: `Missing server key for ${provider}. Set FEATHERLESS_API_KEY or ABLITERATION_API_KEY in .env`,
+      })
+    );
+    return;
+  }
+
+  const target = upstreamBase + rest + search;
+  await pipeUpstream(req, res, target, bodyBuf, {
+    Authorization: 'Bearer ' + key,
+    'x-api-key': key,
+  });
+}
+
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const server = http.createServer(async (req, res) => {
     try {
@@ -161,6 +221,7 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
       if (urlPath === '/health') {
         cors(res, req.headers.origin);
         res.writeHead(200, { 'Content-Type': 'application/json' });
+        const spark = defaultSparkUpstream();
         res.end(
           JSON.stringify({
             ok: true,
@@ -168,6 +229,7 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
             port: PORT,
             featherless: Boolean(keyFor('featherless')),
             abliteration: Boolean(keyFor('abliteration')),
+            spark: { host: spark.host, port: spark.port },
           })
         );
         return;
@@ -191,7 +253,9 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
     }
   });
   server.listen(PORT, HOST, () => {
+    const spark = defaultSparkUpstream();
     console.log(`Cloud key proxy http://${HOST}:${PORT}/{featherless|abliteration}/v1/...`);
+    console.log(`  spark LAN: http://${HOST}:${PORT}/spark/<host>/<port>/v1/... (default ${spark.host}:${spark.port})`);
     console.log(
       `  keys: featherless=${keyFor('featherless') ? 'set' : 'MISSING'} abliteration=${keyFor('abliteration') ? 'set' : 'MISSING'}`
     );

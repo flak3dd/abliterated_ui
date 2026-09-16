@@ -48,3 +48,49 @@ export function agentGateHint(input: {
   }
   return 'Agent: BUILD · tool loop on Spark sandbox';
 }
+
+/** Per-session first-BUILD plan gate (pure — unit-testable). */
+export type BuildPlanSessionGateInput = {
+  /** True when evaluateAgentGate said run (Spark + env + agent on). */
+  agentWouldRun: boolean;
+  /** True after user approved a plan for this chat session. */
+  sessionPlanReady: boolean;
+};
+
+export type BuildPlanSessionGateResult =
+  | { proceed: true; prompt: false }
+  | { proceed: false; prompt: true };
+
+export function evaluateBuildPlanSessionGate(
+  input: BuildPlanSessionGateInput
+): BuildPlanSessionGateResult {
+  if (!input.agentWouldRun) return { proceed: true, prompt: false };
+  if (input.sessionPlanReady) return { proceed: true, prompt: false };
+  return { proceed: false, prompt: true };
+}
+
+/** User reply that means "approve plan / start BUILD". */
+export function isBuildPlanApproveText(text: string): boolean {
+  const t = (text || '').trim();
+  if (!t) return false;
+  return /^(start\s*build|approve(\s*&?\s*build)?|approve\s*plan|yes|go|build\s*it)$/i.test(
+    t
+  );
+}
+
+/** Lightweight local plan when model draft is unavailable. */
+export function draftLocalBuildPlan(goal: string): string {
+  const g = (goal || '').trim() || '(no goal)';
+  return [
+    '## Build plan',
+    '',
+    `**Goal:** ${g}`,
+    '',
+    '1. Explore the sandbox (list/read relevant files).',
+    '2. Implement the smallest complete change set for the goal.',
+    '3. Add or update tests covering the change.',
+    '4. Run tests (and build if applicable); fix until green.',
+    '5. Summarize files written and verification result.',
+  ].join('\n');
+}
+

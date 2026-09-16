@@ -17,6 +17,12 @@ type AgentEnvDeps = {
   writeFile: (path: string, content: string, language?: string) => void;
 };
 
+export type PendingBuildPlan = {
+  goal: string;
+  planText?: string;
+  promptMsgId?: string;
+};
+
 interface AgentState {
   isAgentMode: boolean;
   hydrated: boolean;
@@ -24,10 +30,20 @@ interface AgentState {
   /** Last run that ended budget/cancelled/failed — for Continue */
   lastUnfinishedRun: AgentRun | null;
   budgetTier: AgentBudgetTier;
+  /** Per chat session: BUILD plan approved this session (skips first-run prompt). */
+  buildPlanReadyBySession: Record<string, boolean>;
+  /** Pending first-BUILD goal/plan while awaiting user confirm. */
+  pendingBuildBySession: Record<string, PendingBuildPlan>;
   toggleAgentMode: () => void;
   setAgentMode: (on: boolean) => void;
   setBudgetTier: (tier: AgentBudgetTier) => void;
   loadAgentMode: () => Promise<void>;
+  isBuildPlanReady: (sessionId: string) => boolean;
+  markBuildPlanReady: (sessionId: string) => void;
+  clearBuildPlanSession: (sessionId: string) => void;
+  getPendingBuild: (sessionId: string) => PendingBuildPlan | null;
+  setPendingBuild: (sessionId: string, pending: PendingBuildPlan | null) => void;
+  setBuildPlanDraft: (sessionId: string, planText: string) => void;
   startAgentRun: (opts: {
     goal: string;
     sessionId: string;
@@ -68,6 +84,67 @@ export const useAgentStore = create<AgentState>((set, get) => ({
   activeRun: null,
   lastUnfinishedRun: null,
   budgetTier: 'large',
+  buildPlanReadyBySession: {},
+  pendingBuildBySession: {},
+
+  isBuildPlanReady: (sessionId) => {
+    if (!sessionId) return false;
+    return Boolean(get().buildPlanReadyBySession[sessionId]);
+  },
+
+  markBuildPlanReady: (sessionId) => {
+    if (!sessionId) return;
+    set((state) => ({
+      buildPlanReadyBySession: { ...state.buildPlanReadyBySession, [sessionId]: true },
+    }));
+  },
+
+  clearBuildPlanSession: (sessionId) => {
+    if (!sessionId) return;
+    set((state) => {
+      const ready = { ...state.buildPlanReadyBySession };
+      const pending = { ...state.pendingBuildBySession };
+      delete ready[sessionId];
+      delete pending[sessionId];
+      return { buildPlanReadyBySession: ready, pendingBuildBySession: pending };
+    });
+  },
+
+  getPendingBuild: (sessionId) => {
+    if (!sessionId) return null;
+    return get().pendingBuildBySession[sessionId] || null;
+  },
+
+  setPendingBuild: (sessionId, pending) => {
+    if (!sessionId) return;
+    set((state) => {
+      const next = { ...state.pendingBuildBySession };
+      if (!pending) delete next[sessionId];
+      else next[sessionId] = pending;
+      return { pendingBuildBySession: next };
+    });
+  },
+
+  setBuildPlanDraft: (sessionId, planText) => {
+    if (!sessionId) return;
+    set((state) => {
+      const prev = state.pendingBuildBySession[sessionId];
+      if (!prev) {
+        return {
+          pendingBuildBySession: {
+            ...state.pendingBuildBySession,
+            [sessionId]: { goal: '', planText },
+          },
+        };
+      }
+      return {
+        pendingBuildBySession: {
+          ...state.pendingBuildBySession,
+          [sessionId]: { ...prev, planText },
+        },
+      };
+    });
+  },
 
   toggleAgentMode: () => {
     get().setAgentMode(!get().isAgentMode);

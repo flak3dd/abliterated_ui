@@ -290,6 +290,20 @@ export function evaluateVerifyPolicy(run: AgentRun, envHasPackageJson: boolean):
   return { ok: true, notes };
 }
 
+/** True iff all system/developer roles are a contiguous prefix (vLLM / OpenAI-compat). */
+export function systemMessagesArePrefixOnly(messages: { role: string }[]): boolean {
+  let seenNonSystem = false;
+  for (const m of messages) {
+    const r = String(m.role || '');
+    if (r === 'system' || r === 'developer') {
+      if (seenNonSystem) return false;
+    } else {
+      seenNonSystem = true;
+    }
+  }
+  return true;
+}
+
 export const READONLY_TOOLS = new Set(['list_files', 'read_file', 'grep']);
 export const WRITE_TOOLS = new Set(['write_file', 'edit_file', 'set_plan', 'update_task']);
 export const EXEC_TOOLS = new Set(['exec', 'test', 'build', 'github']);

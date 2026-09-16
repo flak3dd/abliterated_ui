@@ -163,6 +163,52 @@ check(
   gate.agentGateHint({ isAgentMode: false, meshMode: 'spark', hasActiveEnv: true }) === null
 );
 
+// --- first-BUILD plan session gate ---
+check(
+  'plan gate prompts when agent would run and session not ready',
+  (() => {
+    const r = gate.evaluateBuildPlanSessionGate({
+      agentWouldRun: true,
+      sessionPlanReady: false,
+    });
+    return r.prompt === true && r.proceed === false;
+  })()
+);
+
+check(
+  'plan gate proceeds when session already plan-ready',
+  (() => {
+    const r = gate.evaluateBuildPlanSessionGate({
+      agentWouldRun: true,
+      sessionPlanReady: true,
+    });
+    return r.prompt === false && r.proceed === true;
+  })()
+);
+
+check(
+  'plan gate no-ops when agent would not run',
+  (() => {
+    const r = gate.evaluateBuildPlanSessionGate({
+      agentWouldRun: false,
+      sessionPlanReady: false,
+    });
+    return r.prompt === false && r.proceed === true;
+  })()
+);
+
+check(
+  'approve text detects start build',
+  gate.isBuildPlanApproveText('start build') &&
+    gate.isBuildPlanApproveText('Approve & build') &&
+    !gate.isBuildPlanApproveText('please draft a longer plan')
+);
+
+check(
+  'local draft plan includes goal',
+  /fibonacci/i.test(gate.draftLocalBuildPlan('implement fibonacci'))
+);
+
 // --- path helpers ---
 check('safeRelPath ok', tools.safeRelPath('src/foo.py') === 'src/foo.py');
 check('safeRelPath rejects ..', tools.safeRelPath('../etc/passwd') === null);
@@ -504,6 +550,54 @@ check(
     'redactCliSecrets strips gho tokens',
     /REDACTED/.test(tools.redactCliSecrets('Token: gho_ABCDEFG1234567890'))
   );
+}
+
+
+// --- vLLM system-message prefix rule ---
+{
+  const okMsgs = [
+    { role: 'system', content: 'sys' },
+    { role: 'user', content: 'goal' },
+    { role: 'assistant', content: '', tool_calls: [{ id: 'c1', type: 'function', function: { name: 'list_files', arguments: '{}' } }] },
+    { role: 'tool', tool_call_id: 'c1', name: 'list_files', content: '[]' },
+  ];
+  check('system prefix-only: valid transcript', context.systemMessagesArePrefixOnly(okMsgs));
+  const trailing = [...okMsgs, { role: 'system', content: '[agent-round-nudge]\nnudge' }];
+  check('system prefix-only: trailing system fails', !context.systemMessagesArePrefixOnly(trailing));
+  const mid = [
+    { role: 'system', content: 'sys' },
+    { role: 'user', content: 'goal' },
+    { role: 'system', content: 'bad mid' },
+    { role: 'assistant', content: 'hi' },
+  ];
+  check('system prefix-only: mid-conversation system fails', !context.systemMessagesArePrefixOnly(mid));
+
+  // Simulate loop refresh-at-0 pattern (never push system after start)
+  const msgs = [
+    { role: 'system', content: 'BASE' },
+    { role: 'user', content: 'goal' },
+    { role: 'assistant', content: 'ok' },
+    { role: 'tool', tool_call_id: 'c1', name: 'list_files', content: '[]' },
+  ];
+  const nudge1 = context.phaseNudge('explore', []);
+  loop.applyRoundSystemNudge(msgs, 'BASE', nudge1);
+  check(
+    'applyRoundSystemNudge refreshes index 0',
+    msgs[0].role === 'system' &&
+      String(msgs[0].content).includes('[agent-round-nudge]') &&
+      String(msgs[0].content).includes('explore')
+  );
+  check('after nudge refresh still prefix-only', context.systemMessagesArePrefixOnly(msgs));
+  const beforeLen = msgs.length;
+  const nudge2 = context.phaseNudge('implement', [{ id: 't1', title: 'do', status: 'open' }]);
+  loop.applyRoundSystemNudge(msgs, 'BASE', nudge2);
+  check(
+    'second nudge does not append system',
+    msgs.length === beforeLen &&
+      msgs.filter((m) => m.role === 'system').length === 1 &&
+      /implement/.test(String(msgs[0].content))
+  );
+  check('tool roles unchanged', msgs.some((m) => m.role === 'tool'));
 }
 
 let failed = 0;
