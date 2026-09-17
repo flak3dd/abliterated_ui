@@ -111,14 +111,14 @@ async function bootAllServices() {
     if (!proxyLive.ok) {
       const child = spawn('node', ['scripts/cloud-key-proxy.mjs'], {
         cwd: sandboxDir,
-        env: { ...process.env, CLOUD_PROXY_HOST: '127.0.0.1', CLOUD_PROXY_PORT: '17332' },
+        env: { ...process.env, CLOUD_PROXY_HOST: '0.0.0.0', CLOUD_PROXY_PORT: '17332' },
         detached: true,
         stdio: 'ignore',
       });
       child.unref();
-      console.log(`  ${C.green}✔ Cloud key proxy spawned (PID: ${child.pid}) on http://127.0.0.1:17332${C.reset}`);
+      console.log(`  ${C.green}✔ Cloud key proxy spawned (PID: ${child.pid}) on http://0.0.0.0:17332${C.reset}`);
     } else {
-      console.log(`  ${C.green}✔ Cloud key proxy already active on http://127.0.0.1:17332${C.reset}`);
+      console.log(`  ${C.green}✔ Cloud key proxy already active on http://0.0.0.0:17332${C.reset}`);
     }
   } catch (err) {
     console.log(`${C.yellow}Cloud key proxy launch notice:${C.reset} ${err.message}`);

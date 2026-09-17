@@ -108,4 +108,26 @@ console.log('Result 4 (React Native Component):', {
   verifiedFiles: res4.verifiedFiles,
 });
 
+
+console.log('\n--- TEST 5: Fabricated SANDBOX SSH theater ---');
+const sshTheater = `
+SANDBOX $ ssh flak3dd 'ls -lh /mnt/nvme/models'
+total 8.0K
+drwxr-xr-x 3 root root 4.0K Sep 1 12:00 qwen
+-rw-r--r-- 1 root root 1.2G Sep 1 12:00 weights.safetensors
+`;
+const res5 = evaluateFactualGrounding(sshTheater, {});
+console.log('Result 5 (SSH theater):', {
+  isGrounded: res5.isGrounded,
+  score: res5.groundingScore,
+  warnings: res5.warnings,
+});
+if (res5.isGrounded || !res5.warnings.some((w) => /SANDBOX|SSH|Invented/i.test(w))) {
+  console.error('FAIL: expected SSH/SANDBOX theater warning and ungrounded');
+  process.exitCode = 1;
+} else {
+  console.log('PASS: SSH theater flagged');
+}
+
 console.log('\nAll anti-hallucination verification tests completed.');
+

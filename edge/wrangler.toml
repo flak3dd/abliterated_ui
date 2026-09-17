@@ -1,0 +1,12 @@
+name = "spark-edge-gateway"
+main = "worker.ts"
+compatibility_date = "2024-09-01"
+
+[vars]
+ORIGIN_GATEWAY_URL = "http://192.168.4.50:8080"
+
+# Production Routes
+# routes = [
+#   { pattern = "api.abliteration.ai/*", zone_name = "abliteration.ai" },
+#   { pattern = "api.abliterated.io/*", zone_name = "abliterated.io" }
+# ]

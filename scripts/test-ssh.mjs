@@ -5,16 +5,15 @@ const execP = promisify(exec);
 
 async function testDirect() {
   const key = '"/Users/adminuser/Library/Application Support/NVIDIA/Sync/config/nvsync.key"';
-  
-  for (const host of ['192.168.4.103', '192.168.4.101', '100.94.45.77']) {
-    console.log(`Testing direct SSH to ${host}...`);
-    try {
-      const { stdout } = await execP(`ssh -o ConnectTimeout=3 -o StrictHostKeyChecking=no -i ${key} flak3dd@${host} 'hostname; uptime'`);
-      console.log(`SUCCESS on ${host}:`, stdout.trim());
-      break;
-    } catch (err) {
-      console.log(`Failed on ${host}:`, err.message.slice(0, 100));
-    }
+  const cmd = process.argv.slice(2).join(' ') || 'cat /mnt/nvme/ocr_pipeline/quick_run.py';
+  console.log(`Running remote cmd: ${cmd}`);
+  try {
+    const { stdout, stderr } = await execP(`ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=no -i ${key} flak3dd@192.168.4.103 ${JSON.stringify(cmd)}`);
+    console.log('--- STDOUT ---');
+    console.log(stdout);
+    if (stderr) console.error('--- STDERR ---', stderr);
+  } catch (err) {
+    console.error('EXEC ERROR:', err.message);
   }
 }
 

@@ -18,7 +18,7 @@ import { fileURLToPath } from 'node:url';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, '..');
 const PORT = Number(process.env.CLOUD_PROXY_PORT || 17332);
-const HOST = process.env.CLOUD_PROXY_HOST || '127.0.0.1';
+const HOST = process.env.CLOUD_PROXY_HOST || '0.0.0.0';
 
 const UPSTREAM = {
   featherless: 'https://api.featherless.ai',

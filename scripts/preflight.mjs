@@ -173,12 +173,14 @@ async function runPreflight() {
       messages: [{ role: 'user', content: 'Respond with exactly: PING' }],
       max_tokens: 16,
       temperature: 0.1,
+      chat_template_kwargs: { enable_thinking: false },
     },
     10000
   );
 
   if (infRes.ok) {
-    const reply = infRes.json?.choices?.[0]?.message?.content?.trim() || 'OK';
+    const msg = infRes.json?.choices?.[0]?.message || {};
+    const reply = (msg.content || msg.reasoning_content || msg.reasoning || 'OK').toString().trim() || 'OK';
     console.log(`${C.green}✔ PASS${C.reset} (${infRes.elapsed}ms · Token reply: "${reply.slice(0, 20)}")`);
     results.push({ name: 'vLLM Inference', target: '/chat/completions', status: 'PASS', detail: `${infRes.elapsed}ms roundtrip` });
   } else {

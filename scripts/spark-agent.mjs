@@ -124,6 +124,8 @@ class SparkAgent {
       temperature: 0.7,
       max_tokens: 4096,
       stream: true,
+      // Flash-Next: without enable_thinking:false, content is null and reasoning is filled
+      chat_template_kwargs: { enable_thinking: false },
     });
 
     return new Promise((resolve) => {

@@ -23,6 +23,7 @@ const reqBody = JSON.stringify({
     },
   ],
   tool_choice: 'auto',
+  chat_template_kwargs: { enable_thinking: false },
 });
 
 const req = http.request(

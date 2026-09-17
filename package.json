@@ -43,6 +43,7 @@
     "ios": "expo start --ios",
     "web": "expo start --web",
     "build:web": "expo export -p web && cp -f vercel.json dist/vercel.json && echo '/* /index.html 200' > dist/_redirects",
+    "build:web-api": "npm --prefix web-api-app run build",
     "preflight": "node ./scripts/preflight.mjs",
     "agent": "node ./scripts/spark-agent.mjs",
     "start-services": "GPU_MEMORY_PROFILE=image-max node ./scripts/start-services.mjs",
@@ -50,6 +51,7 @@
     "start-services:image-max": "GPU_MEMORY_PROFILE=image-max node ./scripts/start-services.mjs",
     "sandbox": "node ./scripts/sandbox-runner.mjs",
     "cloud-proxy": "node ./scripts/cloud-key-proxy.mjs",
+    "mempalace": "node ./scripts/mempalace-bridge.mjs",
     "test-ssh": "node ./scripts/test-ssh.mjs",
     "test-controller": "node ./scripts/test-controller.mjs",
     "test-tailscale": "node ./scripts/test-tailscale.mjs",
@@ -64,7 +66,14 @@
     "check-gpu": "node ./scripts/check-gpu.mjs",
     "test-agent": "node ./scripts/test-agent.mjs",
     "sandbox:watch": "node ./scripts/sandbox-watchdog.mjs",
-    "sandbox:install-launchd": "launchctl unload ~/Library/LaunchAgents/com.abliterated.sandbox-runner.plist 2>/dev/null; cp ./scripts/launchd/com.abliterated.sandbox-runner.plist ~/Library/LaunchAgents/ && launchctl load ~/Library/LaunchAgents/com.abliterated.sandbox-runner.plist && echo loaded"
+    "sandbox:install-launchd": "launchctl unload ~/Library/LaunchAgents/com.abliterated.sandbox-runner.plist 2>/dev/null; cp ./scripts/launchd/com.abliterated.sandbox-runner.plist ~/Library/LaunchAgents/ && launchctl load ~/Library/LaunchAgents/com.abliterated.sandbox-runner.plist && echo loaded",
+    "test-chat-history": "node ./scripts/test-chat-history.mjs",
+    "test:phase2": "node ./scripts/test-phase2-pubsub.mjs",
+    "test:phase3": "node ./scripts/test-phase3-maintenance.mjs",
+    "rapid-debug": "bash ./scripts/rapid-debug.sh",
+    "setup-hooks": "cp .githooks/pre-push .git/hooks/pre-push",
+    "push:spark": "bash ./scripts/push-to-spark.sh",
+    "run:all": "bash ./scripts/run-all-services.sh"
   },
   "private": true,
   "optionalDependencies": {

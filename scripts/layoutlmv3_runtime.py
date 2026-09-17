@@ -10,7 +10,7 @@ Run:
   # or from repo root:
   python scripts/layoutlmv3_runtime.py
 
-Client (Abliterated UI) talks to:
+Client (Abliterated UI) talks to:   
   GET  /health
   GET  /v1/models
   POST /v1/models/load

@@ -36,6 +36,14 @@ import {
   parseScheduleSlash,
   parseWatchSlash,
 } from './sandbox-jobs.mjs';
+import {
+  CONTAINER_PROFILES,
+  spawnContainer,
+  execInContainer,
+  destroyContainer,
+  listActiveContainers,
+  hasActiveContainer,
+} from './sandbox-container.mjs';
 
 const execP = promisify(exec);
 const execFileP = promisify(execFile);
@@ -123,12 +131,29 @@ function safeJoin(root, rel) {
   return abs;
 }
 
+const NVSYNC_SSH_KEY = '/Users/adminuser/Library/Application Support/NVIDIA/Sync/config/nvsync.key';
+const SSH_CONTROL_PATH = '/tmp/ssh_mux_spark_%h_%p_%r';
+
 async function sshRemote(script, timeout = 30000) {
   const b64 = Buffer.from(String(script), 'utf8').toString('base64');
-  return execFileP('ssh', ['flak3dd', `echo ${b64} | base64 -d | bash`], {
-    timeout,
-    maxBuffer: 10 * 1024 * 1024,
-  });
+  return execFileP(
+    'ssh',
+    [
+      '-o', 'ProxyCommand=none',
+      '-o', 'StrictHostKeyChecking=no',
+      '-o', 'ConnectTimeout=10',
+      '-o', 'ControlMaster=auto',
+      '-o', `ControlPath=${SSH_CONTROL_PATH}`,
+      '-o', 'ControlPersist=10m',
+      '-i', NVSYNC_SSH_KEY,
+      'flak3dd@192.168.4.103',
+      `echo ${b64} | base64 -d | bash`,
+    ],
+    {
+      timeout,
+      maxBuffer: 10 * 1024 * 1024,
+    }
+  );
 }
 
 async function parseJsonBody(req) {
@@ -175,7 +200,7 @@ const server = http.createServer(async (req, res) => {
         service: 'spark-sandbox-runner',
         port: PORT,
         uptime: process.uptime(),
-        features: ['serve', 'preview', 'browser-test', 'sse', 'pty', 'jobs'],
+        features: ['serve', 'preview', 'browser-test', 'sse', 'pty', 'jobs', 'containers'],
       });
     }
 
@@ -407,6 +432,27 @@ const server = http.createServer(async (req, res) => {
         return sendJson(res, 403, { ok: false, error: 'Command blocked by security policy' });
       }
 
+      // If container target specified or container is active for this envId, execute inside container
+      if (target === 'container' || body.useContainer || hasActiveContainer(envId)) {
+        const hostTarget = body.hostTarget || (target === 'container' ? 'dgx_spark' : target);
+        const resExec = await execInContainer({
+          envId,
+          command: cmd,
+          target: hostTarget,
+          timeoutMs: 45000,
+          sshRemote,
+          execLocal: execP,
+        });
+        return sendJson(res, 200, {
+          ok: resExec.ok,
+          stdout: resExec.stdout || '',
+          stderr: resExec.stderr || '',
+          exitCode: resExec.exitCode,
+          inContainer: true,
+          containerName: resExec.containerName,
+        });
+      }
+
       if (target === 'dgx_spark') {
         const remoteDir = `${SANDBOX_BASE_REMOTE}/${envId}`;
         try {
@@ -442,6 +488,84 @@ const server = http.createServer(async (req, res) => {
           });
         }
       }
+    }
+
+    // 4b. CONTAINER API
+    // POST /api/sandbox/container/spawn
+    if (pathname === '/api/sandbox/container/spawn' && req.method === 'POST') {
+      const body = await parseJsonBody(req);
+      const envId = String(body.envId || `env_${Date.now()}`).replace(/[^a-zA-Z0-9_\-]/g, '_');
+      const target = body.target || 'dgx_spark';
+      const result = await spawnContainer({
+        envId,
+        profile: body.profile || 'python_data',
+        target,
+        extraPackages: body.extraPackages || [],
+        timeoutMinutes: body.timeoutMinutes || 30,
+        enableGpu: Boolean(body.enableGpu),
+        sshRemote,
+        execLocal: execP,
+      });
+      broadcastSandboxEvent({
+        type: 'container_spawn',
+        envId,
+        target,
+        ok: result.ok,
+        containerName: result.containerName,
+      });
+      return sendJson(res, result.ok ? 200 : 500, result);
+    }
+
+    // POST /api/sandbox/container/exec
+    if (pathname === '/api/sandbox/container/exec' && req.method === 'POST') {
+      const body = await parseJsonBody(req);
+      const envId = String(body.envId || '').replace(/[^a-zA-Z0-9_\-]/g, '_');
+      const cmd = String(body.cmd || body.command || '').trim();
+      const target = body.target || 'dgx_spark';
+      if (!envId) return sendJson(res, 400, { ok: false, error: 'envId is required' });
+      if (!cmd) return sendJson(res, 400, { ok: false, error: 'Command required' });
+
+      const result = await execInContainer({
+        envId,
+        command: cmd,
+        target,
+        timeoutMs: body.timeoutMs || 45000,
+        sshRemote,
+        execLocal: execP,
+      });
+      return sendJson(res, 200, result);
+    }
+
+    // POST /api/sandbox/container/destroy
+    if (pathname === '/api/sandbox/container/destroy' && req.method === 'POST') {
+      const body = await parseJsonBody(req);
+      const envId = String(body.envId || '').replace(/[^a-zA-Z0-9_\-]/g, '_');
+      const target = body.target || 'dgx_spark';
+      if (!envId) return sendJson(res, 400, { ok: false, error: 'envId is required' });
+
+      const result = await destroyContainer({
+        envId,
+        target,
+        sshRemote,
+        execLocal: execP,
+      });
+      broadcastSandboxEvent({
+        type: 'container_destroy',
+        envId,
+        target,
+        ok: result.ok,
+        containerName: result.containerName,
+      });
+      return sendJson(res, 200, result);
+    }
+
+    // GET /api/sandbox/container/list
+    if (pathname === '/api/sandbox/container/list' && req.method === 'GET') {
+      return sendJson(res, 200, {
+        ok: true,
+        containers: listActiveContainers(),
+        profiles: CONTAINER_PROFILES,
+      });
     }
 
     // Image-gen live debug feed (agent: GET /api/debug/image-gen  or  tail logs/image-gen-debug.jsonl)
@@ -583,6 +707,12 @@ const server = http.createServer(async (req, res) => {
       if (envId) {
         try {
           await stopLiveServer(envId);
+        } catch {}
+        try {
+          await destroyContainer({ envId, target: 'dgx_spark', sshRemote, execLocal: execP });
+        } catch {}
+        try {
+          await destroyContainer({ envId, target: 'local_mac', sshRemote, execLocal: execP });
         } catch {}
         const localDir = path.join(SANDBOX_BASE_LOCAL, envId);
         try {
